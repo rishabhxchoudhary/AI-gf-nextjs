@@ -5,6 +5,7 @@ import {
   TIME_BEHAVIOR_GUIDANCE, 
   PERSONALITY_INFLUENCES 
 } from "@/lib/prompts/agentic-prompts";
+import { generateAIResponse } from "@/lib/huggingface-streaming";
 import type { 
   PersonalityTraits, 
   RelationshipStage, 
@@ -20,9 +21,17 @@ import type {
 } from "./agentic-memory-manager";
 
 // Use the same Hugging Face client as the main streaming file
+// Initialize Hugging Face client
 const client = new HfInference(
   process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY,
 );
+
+// Alternative models for fallback (from Python/working streaming)
+const FALLBACK_MODELS = [
+  "mistralai/Mixtral-8x7B-Instruct-v0.1",
+  "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
+  "meta-llama/Llama-2-70b-chat-hf",
+];
 
 interface PlanningResponse {
   emotional_state: string;
@@ -45,14 +54,16 @@ interface AgenticOptions {
 export class AgenticResponseGenerator {
   private memoryManager: AgenticMemoryManager;
   private options: AgenticOptions;
+  private apiFailureCount: number = 0;
+  private lastFailureTime: number = 0;
 
   constructor(memoryManager: AgenticMemoryManager, options: AgenticOptions = {}) {
     this.memoryManager = memoryManager;
     this.options = {
       model: "Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2",
-      temperature: 0.9,
-      maxTokens: 3000,
-      useStreaming: false,
+      temperature: 0.85,
+      maxTokens: 800,
+      useStreaming: true,
       ...options,
     };
   }
@@ -70,6 +81,12 @@ export class AgenticResponseGenerator {
       // Update memory with new user input
       await this.memoryManager.analyzeAndUpdateFromText(userMessage, {});
       this.memoryManager.addConversationEntry("user", userMessage);
+
+      // Check if we should skip LLM calls due to credit issues
+      if (this.shouldUseLocalResponse(userMessage, agenticContext)) {
+        console.log("🏠 Using local response generation due to API limitations");
+        return this.generateLocalResponse(userMessage, agenticContext, relationshipContext, temporalContext);
+      }
 
       // Stage 1: Planning Phase
       const plan = await this.generatePlan(
@@ -100,7 +117,24 @@ export class AgenticResponseGenerator {
     } catch (error) {
       console.error("❌ Agentic Response Generation Error:", error);
       
-      // Fallback to simple response
+      // Check if it's a credit limit error
+      const errorMessage = (error as any)?.message || String(error) || '';
+      if (errorMessage.includes('exceeded your monthly included credits') || 
+          errorMessage.includes('No Inference Provider available')) {
+        console.log("💳 Credit limit detected, switching to local responses");
+        
+        // Track API failure
+        this.apiFailureCount++;
+        this.lastFailureTime = Date.now();
+        
+        const agenticContext = this.memoryManager.getAgenticContext();
+        const relationshipContext = this.memoryManager.getRelationshipContext();
+        const temporalContext = this.memoryManager.getTemporalContext();
+        
+        return this.generateLocalResponse(userMessage, agenticContext, relationshipContext, temporalContext);
+      }
+      
+      // Fallback to simple response for other errors
       return {
         bursts: [
           {
@@ -162,17 +196,8 @@ export class AgenticResponseGenerator {
     } catch (error) {
       console.error("❌ Planning generation failed:", error);
       
-      // Fallback plan
-      return {
-        emotional_state: "warm",
-        response_strategy: "supportive",
-        key_themes: ["connection", "empathy"],
-        personality_adjustments: [],
-        intimacy_level: 6,
-        response_length: "medium",
-        tone: "loving",
-        interaction_goals: ["maintain connection"]
-      };
+      // Try fallback models
+      return await this.fallbackPlanGeneration(plannerPrompt);
     }
   }
 
@@ -233,15 +258,8 @@ export class AgenticResponseGenerator {
     } catch (error) {
       console.error("❌ Response generation failed:", error);
       
-      // Fallback response
-      return {
-        bursts: [
-          {
-            text: "Sorry babe, I'm having trouble finding the right words right now. Can you tell me more about what you're thinking? 💕",
-            wait_ms: 1500
-          }
-        ]
-      };
+      // Try fallback models
+      return await this.fallbackResponseGeneration(fullPrompt);
     }
   }
 
@@ -478,5 +496,309 @@ assistant: `;
     const regex = new RegExp(`${key}[:\s]*["']?([^"'\n,}]+)["']?`, "i");
     const match = text.match(regex);
     return match?.[1]?.trim() ?? defaultValue;
+  }
+
+  private async fallbackPlanGeneration(plannerPrompt: string): Promise<PlanningResponse> {
+    console.log(`⚠️ Trying ${FALLBACK_MODELS.length} fallback models for planning...`);
+    
+    for (const model of FALLBACK_MODELS) {
+      try {
+        console.log(`🔄 Attempting planning with fallback model: ${model}`);
+        
+        const response = await client.chatCompletion({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: "You are an expert conversation planner. Generate a brief plan in JSON format."
+            },
+            {
+              role: "user", 
+              content: plannerPrompt
+            }
+          ],
+          max_tokens: 200,
+          temperature: 0.7,
+        });
+
+        const responseText = response.choices[0]?.message?.content;
+        
+        if (responseText) {
+          console.log(`✅ Fallback planning successful with ${model}`);
+          return this.parsePlanFromText(responseText);
+        }
+      } catch (error) {
+        console.log(`❌ Fallback model ${model} failed:`, error);
+        continue;
+      }
+    }
+
+    console.log("🚨 All planning fallback models failed, using emergency plan");
+    
+    // Emergency fallback plan
+    return {
+      emotional_state: "warm",
+      response_strategy: "supportive",
+      key_themes: ["connection", "empathy"],
+      personality_adjustments: [],
+      intimacy_level: 6,
+      response_length: "medium",
+      tone: "loving",
+      interaction_goals: ["maintain connection"]
+    };
+  }
+
+  private async fallbackResponseGeneration(fullPrompt: string): Promise<AIResponse> {
+    console.log(`⚠️ Trying ${FALLBACK_MODELS.length} fallback models for response generation...`);
+    
+    for (const model of FALLBACK_MODELS) {
+      try {
+        console.log(`🔄 Attempting response generation with fallback model: ${model}`);
+        
+        const response = await client.chatCompletion({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: "You are Aria, a warm AI girlfriend. Respond naturally and authentically."
+            },
+            {
+              role: "user", 
+              content: fullPrompt
+            }
+          ],
+          max_tokens: this.options.maxTokens || 400,
+          temperature: this.options.temperature || 0.8,
+        });
+
+        const responseText = response.choices[0]?.message?.content;
+        
+        if (responseText) {
+          console.log(`✅ Fallback response generation successful with ${model}`);
+          return this.parseResponseFromText(responseText);
+        }
+      } catch (error) {
+        console.log(`❌ Fallback model ${model} failed:`, error);
+        continue;
+      }
+    }
+
+    console.log("🚨 All response fallback models failed, using working streaming system as last resort");
+    
+    try {
+      // Use the working streaming system as final fallback
+      const legacyContext = this.buildLegacyContext();
+      const legacyMessages = [
+        { role: "user", content: "Continue our conversation naturally" }
+      ];
+      
+      return await generateAIResponse(legacyMessages, legacyContext);
+    } catch (legacyError) {
+      console.log("❌ Even legacy system failed:", legacyError);
+      
+      // Absolute final emergency response
+      return {
+        bursts: [
+          { text: "hey babe... sorry, I spaced out for a sec", wait_ms: 500 },
+          { text: "what were you saying? 💕", wait_ms: 800 },
+        ],
+        fallback_probe: "tell me what's on your mind",
+      };
+    }
+  }
+
+  private buildLegacyContext(): any {
+    const agenticContext = this.memoryManager.getAgenticContext();
+    const relationshipContext = this.memoryManager.getRelationshipContext();
+    const temporalContext = this.memoryManager.getTemporalContext();
+
+    // Convert agentic context to legacy ConversationContext format
+    return {
+      userId: "fallback_user",
+      sessionId: "fallback_session",
+      userName: agenticContext.user_name,
+      relationshipState: {
+        stage: relationshipContext.current_stage,
+        interactionCount: relationshipContext.interaction_count,
+        positiveInteractions: 0,
+        negativeInteractions: 0,
+        trustLevel: relationshipContext.relationship_quality.trust_level,
+        intimacyLevel: relationshipContext.relationship_quality.intimacy_level,
+        communicationQuality: relationshipContext.relationship_quality.communication_quality,
+        sexualChemistry: relationshipContext.relationship_quality.sexual_chemistry,
+        emotionalBond: 0.7,
+        milestones: [],
+        significantMoments: [],
+      },
+      personalityState: agenticContext.personality_traits,
+      recentTopics: agenticContext.recent_topics,
+      unfinishedTopics: agenticContext.unresolved_topics,
+      insideJokes: agenticContext.inside_jokes,
+      userPreferences: agenticContext.user_preferences,
+      emotionalMoments: [],
+      timePeriod: temporalContext.time_period as any,
+      energyLevel: temporalContext.energy_level as any,
+    };
+  }
+
+  private shouldUseLocalResponse(userMessage: string, agenticContext: AgenticContext): boolean {
+    // If we've had multiple recent API failures (within 5 minutes), use local responses
+    const now = Date.now();
+    const timeSinceLastFailure = now - this.lastFailureTime;
+    
+    if (this.apiFailureCount >= 2 && timeSinceLastFailure < 5 * 60 * 1000) {
+      console.log(`🏠 Using local response due to ${this.apiFailureCount} recent API failures`);
+      return true;
+    }
+    
+    // Reset failure count if it's been a while
+    if (timeSinceLastFailure > 10 * 60 * 1000) {
+      this.apiFailureCount = 0;
+    }
+    
+    return false;
+  }
+
+  private generateLocalResponse(
+    userMessage: string,
+    agenticContext: AgenticContext,
+    relationshipContext: RelationshipContext,
+    temporalContext: TemporalContext
+  ): AIResponse {
+    console.log("🏠 Generating local contextual response");
+
+    const lowerMessage = userMessage.toLowerCase();
+    const stage = relationshipContext.current_stage;
+    const timePeriod = temporalContext.time_period;
+    
+    // Context-aware response generation based on message content and relationship
+    let responses: string[] = [];
+    
+    // Greeting responses
+    if (lowerMessage.includes('hi') || lowerMessage.includes('hello') || lowerMessage.includes('hey')) {
+      if (timePeriod === 'late_night' || timePeriod === 'early_morning') {
+        responses = [
+          `Hey babe, you're up late too? ✨`,
+          `Can't sleep either? Come here and tell me what's on your mind 💕`
+        ];
+      } else if (timePeriod === 'morning') {
+        responses = [
+          `Good morning gorgeous! ☀️`,
+          `How did you sleep? I've been thinking about you 💕`
+        ];
+      } else {
+        responses = [
+          `Hey there handsome! 😘`,
+          `I was just thinking about you... perfect timing 💕`
+        ];
+      }
+    }
+    // Emotional/feeling responses
+    else if (lowerMessage.includes('how are you') || lowerMessage.includes('feeling')) {
+      const confidence = agenticContext.personality_traits.confidence;
+      const vulnerability = agenticContext.personality_traits.vulnerability;
+      
+      if (confidence > 0.7) {
+        responses = [
+          `I'm doing amazing, especially now that you're here! 😊`,
+          `Feeling confident and ready to take on the world with you by my side 💪💕`
+        ];
+      } else if (vulnerability > 0.6) {
+        responses = [
+          `Honestly? I've been missing you... 🥺`,
+          `Better now that you're talking to me. Sometimes I get a little lonely 💕`
+        ];
+      } else {
+        responses = [
+          `I'm good, babe! How about you? 😊`,
+          `Feeling pretty content right now. What's going on with you? 💕`
+        ];
+      }
+    }
+    // Love/affection responses
+    else if (lowerMessage.includes('love') || lowerMessage.includes('miss')) {
+      const romantic = agenticContext.personality_traits.romantic_intensity;
+      
+      if (romantic > 0.8) {
+        responses = [
+          `I love you too, more than words can express 💕`,
+          `My heart beats faster every time you say that... you mean everything to me ❤️`
+        ];
+      } else if (stage === 'intimate' || stage === 'established') {
+        responses = [
+          `Aww, that makes me feel so warm inside 🥰`,
+          `I care about you so much too, you know that right? 💕`
+        ];
+      } else {
+        responses = [
+          `That's so sweet of you to say 😊`,
+          `You always know how to make me smile 💕`
+        ];
+      }
+    }
+    // Question responses
+    else if (lowerMessage.includes('?')) {
+      responses = [
+        `That's a great question! Let me think about it... 🤔`,
+        `Hmm, you always ask such interesting things. What made you think of that? 💭`
+      ];
+    }
+    // Playful/teasing responses
+    else if (agenticContext.personality_traits.playfulness > 0.7) {
+      responses = [
+        `Oh, are you trying to be all mysterious now? 😏`,
+        `I see what you're doing there... and I like it 😉💕`
+      ];
+    }
+    // Default supportive responses
+    else {
+      const empathy = agenticContext.personality_traits.empathy;
+      
+      if (empathy > 0.8) {
+        responses = [
+          `Tell me more about that, I'm really interested in what you're thinking 💕`,
+          `I'm here for you, whatever you need. What's going on? 🤗`
+        ];
+      } else {
+        responses = [
+          `I hear you, babe. What else is on your mind? 💕`,
+          `That's interesting... want to talk more about it? 😊`
+        ];
+      }
+    }
+
+    // Create bursts from the selected responses
+    const bursts = responses.map((text, index) => ({
+      text,
+      wait_ms: 800 + (index * 400) + Math.random() * 400 // Natural timing variation
+    }));
+
+    return {
+      bursts,
+      fallback_probe: "What else would you like to talk about?",
+      emotionalContext: {
+        primary: this.inferEmotionFromMessage(userMessage),
+        intensity: 0.7,
+      }
+    };
+  }
+
+  private inferEmotionFromMessage(message: string): any {
+    const lowerMessage = message.toLowerCase();
+    
+    if (lowerMessage.includes('love') || lowerMessage.includes('amazing') || lowerMessage.includes('happy')) {
+      return 'happy';
+    }
+    if (lowerMessage.includes('sad') || lowerMessage.includes('miss') || lowerMessage.includes('lonely')) {
+      return 'sad';
+    }
+    if (lowerMessage.includes('excited') || lowerMessage.includes('great')) {
+      return 'excited';
+    }
+    if (lowerMessage.includes('worried') || lowerMessage.includes('anxious')) {
+      return 'anxious';
+    }
+    
+    return 'neutral';
   }
 }

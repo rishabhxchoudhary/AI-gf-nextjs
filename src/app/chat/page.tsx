@@ -17,7 +17,7 @@ import {
   Divider,
   Progress,
 } from "@nextui-org/react";
-import type { MessageBurst } from "@/types/ai-girlfriend";
+import type { MessageBurst, IceBreaker } from "@/types/ai-girlfriend";
 
 export default function ChatPage() {
   const { data: session, status } = useSession();
@@ -27,12 +27,17 @@ export default function ChatPage() {
   const [sessionId, setSessionId] = useState<string>("");
   const [isTyping, setIsTyping] = useState(false);
   const [currentBurst, setCurrentBurst] = useState<string>("");
+  const [iceBreakers, setIceBreakers] = useState<IceBreaker[]>([]);
+  const [showIceBreakers, setShowIceBreakers] = useState(false);
+  const [isGeneratingIceBreakers, setIsGeneratingIceBreakers] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // tRPC mutations and queries
   const initUser = api.aiGirlfriend.initializeUser.useMutation();
   const startSession = api.aiGirlfriend.startSession.useMutation();
   const sendMessage = api.aiGirlfriend.sendMessage.useMutation();
+  const sendIceBreakerMessage = api.aiGirlfriend.sendIceBreakerMessage.useMutation();
+  const generateIceBreakers = api.aiGirlfriend.generateIceBreakers.useMutation();
   const endSession = api.aiGirlfriend.endSession.useMutation();
   const { data: userProfile, refetch: refetchProfile } = api.aiGirlfriend.getUserProfile.useQuery(
     undefined,
@@ -172,6 +177,74 @@ export default function ChatPage() {
 
     setCurrentBurst("");
     setIsTyping(false);
+  };
+
+  const handleGenerateIceBreakers = async () => {
+    if (!sessionId || isGeneratingIceBreakers) return;
+
+    setIsGeneratingIceBreakers(true);
+    try {
+      const response = await generateIceBreakers.mutateAsync({
+        sessionId,
+        count: 3,
+      });
+
+      setIceBreakers(response.iceBreakers);
+      setShowIceBreakers(true);
+      
+      // Refresh credits after ice breaker generation
+      refetchCredits();
+    } catch (error) {
+      console.error("Failed to generate ice breakers:", error);
+      
+      // Show error message to user
+      setMessages(prev => [...prev, {
+        role: "system",
+        content: "Failed to generate conversation ideas. Please try again or check your credits.",
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
+      setIsGeneratingIceBreakers(false);
+    }
+  };
+
+  const handleIceBreakerClick = async (iceBreaker: IceBreaker) => {
+    if (isTyping) return;
+
+    // Hide ice breakers
+    setShowIceBreakers(false);
+
+    // Add user message immediately
+    setMessages(prev => [...prev, {
+      role: "user",
+      content: iceBreaker.text,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    try {
+      const response = await sendIceBreakerMessage.mutateAsync({
+        sessionId,
+        iceBreakerId: iceBreaker.id,
+        message: iceBreaker.text,
+      });
+
+      // Handle the AI response the same way as regular messages
+      if (response.response && Array.isArray(response.response)) {
+        await simulateTyping(response.response);
+      }
+
+      // Refresh credits
+      refetchCredits();
+      refetchProfile();
+    } catch (error: any) {
+      console.error("Failed to send ice breaker message:", error);
+      
+      setMessages(prev => [...prev, {
+        role: "system",
+        content: error.message || "Failed to send message. Please try again.",
+        timestamp: new Date().toISOString(),
+      }]);
+    }
   };
 
   const handleSendMessage = async () => {
@@ -403,8 +476,71 @@ export default function ChatPage() {
 
         <Divider />
 
+        {/* Ice Breakers */}
+        {showIceBreakers && iceBreakers.length > 0 && (
+          <div className="px-6 py-3 bg-default-50/50">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-semibold text-default-600">💡 Conversation Starters</p>
+              <Button 
+                size="sm" 
+                variant="light" 
+                onClick={() => setShowIceBreakers(false)}
+                className="text-xs"
+              >
+                Hide
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2">
+              {iceBreakers.map((iceBreaker) => (
+                <Button
+                  key={iceBreaker.id}
+                  variant="flat"
+                  size="sm"
+                  className="justify-start text-left h-auto py-3 px-3"
+                  onClick={() => handleIceBreakerClick(iceBreaker)}
+                  disabled={isTyping || credits?.credits === 0}
+                >
+                  <div className="flex flex-col items-start w-full">
+                    <span className="text-sm">{iceBreaker.text}</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Chip size="sm" variant="dot" color={
+                        iceBreaker.type === "flirty" ? "danger" :
+                        iceBreaker.type === "intimate" ? "secondary" :
+                        iceBreaker.type === "playful" ? "warning" :
+                        iceBreaker.type === "compliment" ? "success" :
+                        "primary"
+                      }>
+                        {iceBreaker.type}
+                      </Chip>
+                      <span className="text-xs text-default-400">{iceBreaker.mood}</span>
+                    </div>
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <CardFooter className="px-6 py-4">
-          <div className="flex items-center gap-2 w-full">
+          <div className="flex flex-col gap-3 w-full">
+            {/* Ice Breaker Toggle Button */}
+            {!showIceBreakers && messages.length > 0 && (
+              <div className="flex justify-center">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onClick={handleGenerateIceBreakers}
+                  disabled={isGeneratingIceBreakers || (credits?.credits || 0) < 1}
+                  isLoading={isGeneratingIceBreakers}
+                  className="text-xs"
+                >
+                  💡 Get conversation ideas {(credits?.credits || 0) < 1 ? "(1 credit needed)" : "(1 credit)"}
+                </Button>
+              </div>
+            )}
+
+            {/* Message Input */}
+            <div className="flex items-center gap-2 w-full">
             <Input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
@@ -428,13 +564,14 @@ export default function ChatPage() {
             >
               Send
             </Button>
-          </div>
+            </div>
 
-          {credits?.credits === 0 && (
-            <p className="text-xs text-danger mt-2">
-              You're out of credits! Purchase more to continue chatting.
-            </p>
-          )}
+            {credits?.credits === 0 && (
+              <p className="text-xs text-danger mt-2">
+                You're out of credits! Purchase more to continue chatting.
+              </p>
+            )}
+          </div>
         </CardFooter>
       </Card>
 
@@ -444,7 +581,7 @@ export default function ChatPage() {
           <p className="text-xs font-semibold mb-2">Aria's Current Mood</p>
           <div className="flex gap-2 flex-wrap">
             {Object.entries(userProfile.personalityTraits)
-              .filter(([_, value]) => value > 0.7)
+              .filter(([_, value]) => typeof value === 'number' && value > 0.7)
               .slice(0, 5)
               .map(([trait, value]) => (
                 <Chip key={trait} size="sm" variant="flat">

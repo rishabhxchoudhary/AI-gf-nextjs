@@ -217,3 +217,11 @@ export interface CreditTransaction {
   timestamp: string;
   balance: number;
 }
+
+export interface IceBreaker {
+  id: string;
+  text: string;
+  type: "question" | "compliment" | "playful" | "intimate" | "supportive" | "flirty";
+  mood: string;
+  priority: number;
+}

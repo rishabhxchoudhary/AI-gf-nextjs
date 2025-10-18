@@ -24,6 +24,7 @@ import {
 import { generateAIResponse } from "@/lib/huggingface-streaming";
 import { createAgenticHandler, type AgenticHandler } from "@/lib/components/agentic-handler";
 import type { AgenticMemoryManager } from "@/lib/components/agentic-memory-manager";
+import type { IceBreaker } from "@/lib/components/ice-breaker-generator";
 import type {
   ConversationContext,
   Message,
@@ -461,6 +462,212 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         newBalance: user.credits + input.amount,
+      };
+    }),
+
+  // Generate conversation ice breakers
+  generateIceBreakers: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string(),
+        count: z.number().min(1).max(5).default(3),
+        includeTypes: z.array(z.enum(["question", "compliment", "playful", "intimate", "supportive", "flirty"])).optional(),
+        excludeTypes: z.array(z.enum(["question", "compliment", "playful", "intimate", "supportive", "flirty"])).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const { sessionId, count, includeTypes, excludeTypes } = input;
+
+      // Check credits first
+      const credits = await getUserCredits(userId);
+      if (credits.credits < CREDITS_PER_MESSAGE) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Insufficient credits",
+        });
+      }
+
+      // Get user for validation
+      const user = await getUser(userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "User not found",
+        });
+      }
+
+      // Get conversation history for context
+      const recentMessages = await getMessages(
+        userId,
+        sessionId,
+        MAX_HISTORY_LENGTH,
+      );
+
+      // Create agentic handler
+      const agenticHandler = createAgenticHandler({
+        model: "Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2",
+        temperature: 0.8,
+        maxTokens: 400,
+      });
+
+      // Initialize with user context
+      await agenticHandler.initialize(userId, sessionId);
+
+      // Format conversation history
+      const conversationHistory: Message[] = recentMessages.map((msg) => ({
+        id: msg.id || nanoid(),
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        timestamp: msg.timestamp || new Date().toISOString(),
+        metadata: msg.metadata,
+      }));
+
+      // Deduct credits BEFORE generating ice breakers (prevents negative credits)
+      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
+
+      console.log(`🧊 Generating ice breakers for user: ${userId}`);
+
+      // Generate ice breakers
+      const iceBreakers = await agenticHandler.generateIceBreakers(
+        conversationHistory,
+        {
+          count,
+          includeTypes,
+          excludeTypes,
+        }
+      );
+
+      // Track analytics
+      await trackAnalytics(userId, "ice_breakers_generated", {
+        sessionId,
+        count: iceBreakers.length,
+        types: iceBreakers.map(ib => ib.type),
+        creditsUsed: CREDITS_PER_MESSAGE,
+      });
+
+      console.log(`✅ Generated ${iceBreakers.length} ice breakers for user: ${userId}`);
+
+      return {
+        iceBreakers,
+        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        generatedAt: new Date().toISOString(),
+      };
+    }),
+
+  // Send ice breaker message (when user clicks one)
+  sendIceBreakerMessage: protectedProcedure
+    .input(
+      z.object({
+        sessionId: z.string(),
+        iceBreakerId: z.string(),
+        message: z.string().min(1).max(MAX_MESSAGE_LENGTH),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const { sessionId, iceBreakerId, message } = input;
+
+      // Check credits first
+      const credits = await getUserCredits(userId);
+      if (credits.credits < CREDITS_PER_MESSAGE) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Insufficient credits",
+        });
+      }
+
+      console.log(`🧊 Processing ice breaker message for user: ${userId}, ice breaker: ${iceBreakerId}`);
+
+      // Track ice breaker usage
+      await trackAnalytics(userId, "ice_breaker_used", {
+        sessionId,
+        iceBreakerId,
+        message,
+      });
+
+      // Process as regular message using the main sendMessage logic
+      // We'll implement the same logic here to avoid circular calls
+      const user = await getUser(userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND", 
+          message: "User not found",
+        });
+      }
+
+      // Get or create conversation
+      let conversation = await getConversation(userId, sessionId);
+      if (!conversation) {
+        await createConversation(userId, sessionId);
+        conversation = await getConversation(userId, sessionId);
+      }
+
+      // Create agentic handler
+      const agenticHandler = createAgenticHandler({
+        model: "Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2",
+        temperature: 0.85,
+        maxTokens: 800,
+        useStreaming: true,
+      });
+
+      await agenticHandler.initialize(userId, sessionId);
+
+      // Get recent messages
+      const recentMessages = await getMessages(
+        userId,
+        sessionId,
+        MAX_HISTORY_LENGTH,
+      );
+
+      // Format conversation history
+      const conversationHistory: Message[] = recentMessages.map((msg) => ({
+        id: msg.id || nanoid(),
+        role: msg.role as "user" | "assistant",
+        content: msg.content,
+        timestamp: msg.timestamp || new Date().toISOString(),
+        metadata: msg.metadata,
+      }));
+
+      // Add current ice breaker message
+      const userMessage: Message = {
+        id: nanoid(),
+        role: "user",
+        content: message,
+        timestamp: new Date().toISOString(),
+      };
+      conversationHistory.push(userMessage);
+
+      // Save user message
+      await saveMessage(userId, sessionId, "user", message, {
+        timestamp: userMessage.timestamp,
+        iceBreakerId,
+      });
+
+      // Deduct credits
+      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
+
+      // Generate AI response
+      const aiResponse = await agenticHandler.generateResponse(
+        message,
+        conversationHistory
+      );
+
+      // Combine response
+      const fullResponse = aiResponse.bursts.map((b) => b.text).join(" ");
+
+      // Save AI response
+      await saveMessage(userId, sessionId, "assistant", fullResponse, {
+        bursts: aiResponse.bursts,
+        timestamp: new Date().toISOString(),
+      });
+
+      return {
+        response: aiResponse.bursts,
+        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        emotionalContext: aiResponse.emotionalContext,
+        relationshipUpdate: aiResponse.relationshipUpdate,
+        iceBreakerId,
       };
     }),
 });
