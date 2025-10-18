@@ -50,9 +50,9 @@ export default function Home() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Avatar
-                src="https://api.dicebear.com/7.x/avataaars/svg?seed=Aria"
+                src="/avatar.webp"
                 size="sm"
-                className="ring-2 ring-pink-500"
+                className="ring-2 ring-pink-500 max-h-50 max-w-50 rounded-full"
               />
               <h1 className="text-xl font-bold bg-gradient-to-r from-pink-500 to-purple-600 bg-clip-text text-transparent">
                 AI Girlfriend
@@ -174,9 +174,9 @@ export default function Home() {
               <CardHeader className="pb-0">
                 <div className="flex items-center gap-4">
                   <Avatar
-                    src="https://api.dicebear.com/7.x/avataaars/svg?seed=Aria"
+                    src="/avatar.webp"
                     size="lg"
-                    className="ring-2 ring-pink-500"
+                    className="ring-2 ring-pink-500 max-h-50 max-w-50 rounded-full"
                   />
                   <div>
                     <h3 className="text-lg font-semibold">Aria</h3>

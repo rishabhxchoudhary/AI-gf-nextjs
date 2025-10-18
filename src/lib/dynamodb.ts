@@ -1,19 +1,21 @@
 // Re-export all functions from single table implementation
 export {
   dynamoDB,
-  TABLE_NAME as TABLES,
   // User management
   createUser,
   getUser,
   getUserWithCredits,
   updateUserCredits,
+  // Credit management
+  getUserCredits,
+  addCredits,
   // Session management
   createSession as createConversation,
   getSession as getConversation,
   getUserSessions,
   // Message management
   saveMessage,
-  getSessionMessages as getMessages,
+  getSessionMessages,
   getUserMessages,
   // Personality management
   getPersonalityState,

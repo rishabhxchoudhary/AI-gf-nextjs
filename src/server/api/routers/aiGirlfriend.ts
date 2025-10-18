@@ -18,6 +18,8 @@ import {
   getPersonalityState,
   updatePersonalityState,
   trackAnalytics,
+  getUserCredits,
+  getUserSessions,
 } from "@/lib/dynamodb";
 import { generateAIResponse } from "@/lib/huggingface-streaming";
 import { AgenticMemoryManager } from "@/lib/components/memory-manager";
@@ -99,19 +101,21 @@ export const aiGirlfriendRouter = createTRPCRouter({
       const userId = ctx.session.user.id;
       const { message, sessionId } = input;
 
-      // Get user and check credits
-      const user = await getUserWithCredits(userId);
-      if (!user) {
-        throw new TRPCError({
-          code: "NOT_FOUND",
-          message: "User not found",
-        });
-      }
-
-      if (user.credits < CREDITS_PER_MESSAGE) {
+      // Check credits first
+      const credits = await getUserCredits(userId);
+      if (credits.credits < CREDITS_PER_MESSAGE) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Insufficient credits",
+        });
+      }
+
+      // Get user for name info
+      const user = await getUser(userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND", 
+          message: "User not found",
         });
       }
 
@@ -164,8 +168,11 @@ export const aiGirlfriendRouter = createTRPCRouter({
         timestamp: new Date().toISOString(),
       });
 
+      // Deduct credits BEFORE processing (prevents negative credits)
+      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
+
       // Format messages for Hugging Face (matching Python)
-      const formattedMessages = recentMessages.map((msg: any) => ({
+      const formattedMessages = recentMessages.map((msg) => ({
         role: msg.role,
         content: msg.content,
       }));
@@ -188,9 +195,6 @@ export const aiGirlfriendRouter = createTRPCRouter({
         emotionalContext: aiResponse.emotionalContext,
         timestamp: new Date().toISOString(),
       });
-
-      // Update user credits
-      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
 
       // Update personality state and save to database
       if (aiResponse.personalityUpdate) {
@@ -231,7 +235,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         response: aiResponse.bursts,
-        creditsRemaining: user.credits - CREDITS_PER_MESSAGE,
+        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
         emotionalContext: aiResponse.emotionalContext,
         relationshipUpdate: aiResponse.relationshipUpdate,
       };
@@ -252,6 +256,27 @@ export const aiGirlfriendRouter = createTRPCRouter({
       return {
         messages,
         sessionId: input.sessionId,
+      };
+    }),
+
+  // Get user's recent sessions
+  getUserSessions: protectedProcedure
+    .input(
+      z.object({
+        limit: z.number().min(1).max(20).default(5),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const sessions = await getUserSessions(userId, input.limit);
+
+      return {
+        sessions: sessions.map((session) => ({
+          sessionId: session.sessionId,
+          createdAt: session.createdAt,
+          lastMessageAt: session.lastMessageAt,
+          messageCount: session.messageCount || 0,
+        })),
       };
     }),
 
@@ -290,10 +315,11 @@ export const aiGirlfriendRouter = createTRPCRouter({
   // Get current credits
   getCredits: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
-    const user = await getUserWithCredits(userId);
+    const credits = await getUserCredits(userId);
+    const user = await getUser(userId);
 
     return {
-      credits: user?.credits || 0,
+      credits: credits?.credits || 0,
       subscriptionStatus: user?.subscriptionStatus || "free",
     };
   }),

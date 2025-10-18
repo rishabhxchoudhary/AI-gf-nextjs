@@ -11,14 +11,13 @@ import {
   CardFooter,
   Input,
   Button,
-  ScrollShadow,
   Chip,
   Avatar,
   Spinner,
   Divider,
   Progress,
 } from "@nextui-org/react";
-import { MessageBurst } from "@/types/ai-girlfriend";
+import type { MessageBurst } from "@/types/ai-girlfriend";
 
 export default function ChatPage() {
   const { data: session, status } = useSession();
@@ -43,6 +42,14 @@ export default function ChatPage() {
     undefined,
     { enabled: !!session }
   );
+  const { data: userSessions } = api.aiGirlfriend.getUserSessions.useQuery(
+    { limit: 5 },
+    { enabled: !!session }
+  );
+  const { data: conversationHistory, refetch: refetchHistory } = api.aiGirlfriend.getConversationHistory.useQuery(
+    { sessionId, limit: 50 },
+    { enabled: !!sessionId }
+  );
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -63,22 +70,55 @@ export default function ChatPage() {
       // Initialize user if needed
       await initUser.mutateAsync();
 
-      // Start new session
-      const sessionData = await startSession.mutateAsync();
-      setSessionId(sessionData.sessionId);
-
-      // Add welcome message
-      setMessages([
-        {
-          role: "assistant",
-          content: "Hey babe! 💕 I've been thinking about you... How are you feeling today?",
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      // Check if user has existing sessions
+      const sessionsData = userSessions?.sessions || [];
+      
+      if (sessionsData.length > 0) {
+        // Use the most recent session
+        const mostRecentSession = sessionsData[0];
+        setSessionId(mostRecentSession.sessionId);
+        
+        // Load conversation history will be handled by the useEffect below
+      } else {
+        // Start new session if no existing sessions
+        const sessionData = await startSession.mutateAsync();
+        setSessionId(sessionData.sessionId);
+        
+        // Add welcome message for new sessions only
+        setMessages([
+          {
+            role: "assistant",
+            content: "Hey babe! 💕 I've been thinking about you... How are you feeling today?",
+            timestamp: new Date().toISOString(),
+          },
+        ]);
+      }
     } catch (error) {
       console.error("Failed to initialize chat:", error);
     }
   };
+
+  // Load conversation history when sessionId changes
+  useEffect(() => {
+    if (sessionId && conversationHistory?.messages) {
+      const historyMessages = conversationHistory.messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+      }));
+      
+      if (historyMessages.length > 0) {
+        // Only set messages if they're different to avoid overwriting new messages
+        setMessages(prev => {
+          // If we already have messages and they include the history, don't replace
+          if (prev.length > 0 && prev.some(m => historyMessages.some(h => h.timestamp === m.timestamp))) {
+            return prev;
+          }
+          return historyMessages;
+        });
+      }
+    }
+  }, [sessionId, conversationHistory]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -90,8 +130,20 @@ export default function ChatPage() {
 
   const simulateTyping = async (bursts: MessageBurst[]) => {
     setIsTyping(true);
+    setCurrentBurst("");
+
+    // If bursts is not an array or is empty, treat as plain text
+    if (!Array.isArray(bursts) || bursts.length === 0) {
+      setIsTyping(false);
+      return;
+    }
 
     for (const burst of bursts) {
+      // Validate burst structure
+      if (!burst || typeof burst !== 'object' || !burst.text) {
+        continue;
+      }
+
       // Show typing indicator
       await new Promise(resolve => setTimeout(resolve, burst.wait_ms || 800));
 
@@ -103,12 +155,18 @@ export default function ChatPage() {
     }
 
     // Combine all bursts into final message
-    const fullMessage = bursts.map(b => b.text).join(" ");
-    setMessages(prev => [...prev, {
-      role: "assistant",
-      content: fullMessage,
-      timestamp: new Date().toISOString(),
-    }]);
+    const fullMessage = bursts
+      .filter(b => b && b.text)
+      .map(b => b.text)
+      .join(" ");
+    
+    if (fullMessage.trim()) {
+      setMessages(prev => [...prev, {
+        role: "assistant",
+        content: fullMessage,
+        timestamp: new Date().toISOString(),
+      }]);
+    }
 
     setCurrentBurst("");
     setIsTyping(false);
@@ -133,10 +191,55 @@ export default function ChatPage() {
         sessionId,
       });
 
-      // Simulate realistic typing for AI response
-      await simulateTyping(response.response);
+      // Debug log to see what we're getting
+      console.log("AI Response:", response);
 
-      // Refresh credits
+      // Handle different response formats - restore original simple logic
+      if (response.response) {
+        if (Array.isArray(response.response)) {
+          // Proper burst format - this was working before
+          await simulateTyping(response.response);
+        } else if (typeof response.response === 'string') {
+          // If it's a string that looks like JSON bursts, try to extract text
+          if (response.response.includes('"text":')) {
+            const textMatches = response.response.match(/"text":\s*"([^"]*?)"/g);
+            if (textMatches) {
+              const extractedText = textMatches
+                .map(match => {
+                  const textMatch = match.match(/"text":\s*"([^"]*?)"/);
+                  return textMatch ? textMatch[1] : '';
+                })
+                .filter(text => text.length > 0)
+                .join(' ');
+              
+              setMessages(prev => [...prev, {
+                role: "assistant",
+                content: extractedText,
+                timestamp: new Date().toISOString(),
+              }]);
+            } else {
+              // Fallback to original string
+              setMessages(prev => [...prev, {
+                role: "assistant",
+                content: response.response as string,
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+          } else {
+            // Regular text response - show immediately
+            setMessages(prev => [...prev, {
+              role: "assistant",
+              content: response.response as string,
+              timestamp: new Date().toISOString(),
+            }]);
+          }
+        } else {
+          // Try original simulateTyping for other formats
+          await simulateTyping(response.response);
+        }
+      }
+
+      // Refresh credits only (don't refetch history as it might override current messages)
       refetchCredits();
       refetchProfile();
     } catch (error: any) {
@@ -192,9 +295,9 @@ export default function ChatPage() {
         <CardHeader className="flex justify-between items-center px-6 py-4 bg-gradient-to-r from-pink-500/10 to-purple-500/10">
           <div className="flex items-center gap-4">
             <Avatar
-              src="https://api.dicebear.com/7.x/avataaars/svg?seed=Aria"
+              src="/avatar.webp"
               size="lg"
-              className="ring-2 ring-pink-500"
+              className="ring-2 ring-pink-500 max-h-50 max-w-50 rounded-full"
             />
             <div>
               <h1 className="text-xl font-bold">Aria</h1>
@@ -237,11 +340,14 @@ export default function ChatPage() {
         <Divider />
 
         <CardBody className="flex-1 overflow-hidden p-0">
-          <ScrollShadow className="h-full p-6">
+          <div 
+            className="h-full overflow-y-auto p-6 scroll-smooth"
+            style={{ maxHeight: 'calc(100vh - 200px)' }}
+          >
             <div className="space-y-4">
               {messages.map((msg, index) => (
                 <div
-                  key={index}
+                  key={`${msg.timestamp || index}-${msg.role}`}
                   className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
@@ -284,7 +390,7 @@ export default function ChatPage() {
 
               <div ref={messagesEndRef} />
             </div>
-          </ScrollShadow>
+          </div>
         </CardBody>
 
         <Divider />

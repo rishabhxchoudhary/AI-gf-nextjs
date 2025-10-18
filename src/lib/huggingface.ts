@@ -18,7 +18,7 @@ const hf = new HfInference(
 
 // Default configuration
 export const DEFAULT_AI_CONFIG: AIConfig = {
-  model: "microsoft/Phi-3-mini-4k-instruct", // Free model that works well
+  model: "Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2", // Free model that works well
   temperature: 0.9,
   maxTokens: 500,
   topP: 0.95,
@@ -47,6 +47,9 @@ export async function generateAIResponse(
   messages: any[] = [],
 ): Promise<AIResponse> {
   try {
+    console.log(`🤖 Using AI Model: ${DEFAULT_AI_CONFIG.model}`);
+    console.log(`📊 Model Config: temp=${DEFAULT_AI_CONFIG.temperature}, maxTokens=${DEFAULT_AI_CONFIG.maxTokens}`);
+    
     const systemPrompt = buildSystemPrompt(context);
     const plannerPrompt = buildPlannerPrompt(userMessage, context);
 

@@ -144,21 +144,71 @@ export async function getUser(userId: string) {
 }
 
 export async function getUserWithCredits(userId: string) {
+  // Get both user and credits in parallel for better performance
+  const [userResponse, creditsResponse] = await Promise.all([
+    dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_NAME,
+        Key: keys.user(userId),
+      })
+    ),
+    dynamoDB.send(
+      new GetCommand({
+        TableName: TABLE_NAME,
+        Key: keys.userCredits(userId),
+      })
+    ),
+  ]);
+
+  const user = userResponse.Item;
+  const credits = creditsResponse.Item || {
+    credits: 100,
+    totalCreditsUsed: 0,
+    lastUpdated: new Date().toISOString(),
+  };
+
+  return { ...user, ...credits };
+}
+
+// ===========================
+// CREDIT MANAGEMENT
+// ===========================
+
+export async function getUserCredits(userId: string) {
+  const { pk, sk } = keys.userCredits(userId);
   const response = await dynamoDB.send(
-    new QueryCommand({
+    new GetCommand({
       TableName: TABLE_NAME,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :skPrefix)",
+      Key: { pk, sk },
+    })
+  );
+  
+  // Return default credits structure if not found (fallback)
+  return response.Item || {
+    credits: 100,
+    totalCreditsUsed: 0,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+export async function addCredits(userId: string, creditsToAdd: number) {
+  const { pk, sk } = keys.userCredits(userId);
+  const timestamp = new Date().toISOString();
+
+  const response = await dynamoDB.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { pk, sk },
+      UpdateExpression: "ADD credits :add SET lastUpdated = :now",
       ExpressionAttributeValues: {
-        ":pk": keys.user(userId).pk,
-        ":skPrefix": "CREDITS",
+        ":add": creditsToAdd,
+        ":now": timestamp,
       },
+      ReturnValues: "ALL_NEW",
     })
   );
 
-  const user = await getUser(userId);
-  const credits = response.Items?.[0];
-
-  return { ...user, ...credits };
+  return response.Attributes;
 }
 
 export async function updateUserCredits(userId: string, creditsUsed: number) {
@@ -169,10 +219,13 @@ export async function updateUserCredits(userId: string, creditsUsed: number) {
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: { pk, sk },
-      UpdateExpression: "SET credits = credits - :used, totalCreditsUsed = totalCreditsUsed + :used, lastUpdated = :now",
+      UpdateExpression: "ADD credits :negUsed, totalCreditsUsed :used SET lastUpdated = :now",
+      ConditionExpression: "credits >= :minCredits",
       ExpressionAttributeValues: {
+        ":negUsed": -creditsUsed, // Subtract credits by adding negative value
         ":used": creditsUsed,
         ":now": timestamp,
+        ":minCredits": creditsUsed, // Ensure user has enough credits
       },
       ReturnValues: "ALL_NEW",
     })
@@ -183,7 +236,7 @@ export async function updateUserCredits(userId: string, creditsUsed: number) {
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: keys.user(userId),
-      UpdateExpression: "SET lastActiveAt = :now, messageCount = messageCount + :one",
+      UpdateExpression: "SET lastActiveAt = :now ADD messageCount :one",
       ExpressionAttributeValues: {
         ":now": timestamp,
         ":one": 1,
@@ -232,7 +285,7 @@ export async function createSession(userId: string, sessionId: string) {
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: keys.user(userId),
-      UpdateExpression: "SET sessionCount = sessionCount + :one",
+      UpdateExpression: "ADD sessionCount :one",
       ExpressionAttributeValues: {
         ":one": 1,
       },
@@ -311,7 +364,7 @@ export async function saveMessage(
     new UpdateCommand({
       TableName: TABLE_NAME,
       Key: keys.session(userId, sessionId),
-      UpdateExpression: "SET lastMessageAt = :now, messageCount = messageCount + :one",
+      UpdateExpression: "SET lastMessageAt = :now ADD messageCount :one",
       ExpressionAttributeValues: {
         ":now": timestamp,
         ":one": 1,
@@ -603,4 +656,4 @@ export async function batchGetItems(keys: Array<{ pk: string; sk: string }>) {
 }
 
 // Export helper functions for migrations
-export { keys, EntityType };
+export { keys };

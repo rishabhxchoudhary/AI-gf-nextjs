@@ -32,6 +32,10 @@ export async function generateStreamingResponse(
   onToken?: (token: string) => void,
 ): Promise<AIResponse> {
   try {
+    console.log(`🤖 Using Streaming AI Model: ${DEFAULT_MODEL}`);
+    console.log(`🌊 Streaming Config: temp=${DEFAULT_TEMPERATURE}, fallbacks=${FALLBACK_MODELS.length} models`);
+    console.log(`📝 Message Count: ${messages.length}, Context: ${context.relationshipState.stage} relationship`);
+    
     // Build the exact message format like Python
     const systemPrompt = buildSystemPrompt(context);
     const plannerPrompt = buildPlannerPrompt(
@@ -70,10 +74,15 @@ export async function generateStreamingResponse(
       }
     }
 
+    console.log(`📊 Response generated: ${fullResponse.length} characters`);
+    
     // Parse the response to extract bursts (matching Python's JSON parsing)
-    return parseStreamedResponse(fullResponse, context);
+    const result = parseStreamedResponse(fullResponse, context);
+    console.log(`💬 Parsed into ${result.bursts?.length || 0} message bursts`);
+    
+    return result;
   } catch (error) {
-    console.error("Streaming error, trying fallback:", error);
+    console.error("❌ Primary streaming model error:", error);
     // Try fallback model if main fails
     return await fallbackGeneration(messages, context, onToken);
   }
@@ -84,9 +93,13 @@ async function fallbackGeneration(
   context: ConversationContext,
   onToken?: (token: string) => void,
 ): Promise<AIResponse> {
+  console.log(`⚠️ Primary model failed, trying ${FALLBACK_MODELS.length} fallback models...`);
+  
   // Try each fallback model
   for (const model of FALLBACK_MODELS) {
     try {
+      console.log(`🔄 Attempting fallback model: ${model}`);
+      
       const stream = client.chatCompletionStream({
         model,
         messages: messages as any,
@@ -104,13 +117,15 @@ async function fallbackGeneration(
         }
       }
 
+      console.log(`✅ Fallback model ${model} succeeded!`);
       return parseStreamedResponse(fullResponse, context);
     } catch (error) {
-      console.error(`Fallback model ${model} failed:`, error);
+      console.error(`❌ Fallback model ${model} failed:`, error);
       continue;
     }
   }
 
+  console.log(`🚨 All models failed, using emergency fallback response`);
   // If all models fail, return the exact fallback from Python
   return {
     bursts: [
