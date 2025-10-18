@@ -1,0 +1,13 @@
+1. Function Size
+   No function may exceed 30 lines of code (aim for 20–30).
+2. Single Responsibility
+   Every function must perform exactly one clear task—and do it well.
+3. Variable Naming
+   Use short names (e.g. i, tmp) for small, local-scope variables.
+   Use descriptive, verbose names (e.g. user_registration_timeout) for wide or long-lived scope variables.
+4. Self‑Documenting Code
+   Write code that is clear enough not to need comments.
+   Add comments only when necessary, such as for complex logic or intent that can’t be made obvious through naming.
+5. All code must be formatted by a tool like Prettier before being committed.
+6. Code must pass linter checks (e.g., ESLint, Ruff) without any errors before being committed
+7. No need to create unncecessary markdown files unlesss asked.
