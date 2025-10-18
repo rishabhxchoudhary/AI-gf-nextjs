@@ -56,7 +56,7 @@ export async function generateStreamingResponse(
       messages: formattedMessages as any,
       temperature: DEFAULT_TEMPERATURE,
       top_p: 0.95,
-      max_tokens: 200,
+      max_tokens: 2000,
       seed: Math.floor(Math.random() * 1000000), // Add randomness like Python
     });
 

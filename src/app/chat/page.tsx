@@ -378,12 +378,18 @@ export default function ChatPage() {
                 <div className="flex justify-start">
                   <div className="max-w-[70%] bg-default-100 rounded-2xl px-4 py-3 shadow-sm">
                     {currentBurst ? (
-                      <p className="text-sm">{currentBurst}</p>
+                      <div>
+                        <p className="text-sm opacity-60 italic mb-1">Aria is typing...</p>
+                        <p className="text-sm">{currentBurst}</p>
+                      </div>
                     ) : (
-                      <div className="flex items-center gap-1">
-                        <span className="w-2 h-2 bg-default-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <span className="w-2 h-2 bg-default-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                        <span className="w-2 h-2 bg-default-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-default-500">Aria is typing</span>
+                        <div className="flex items-center gap-1">
+                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </div>
                       </div>
                     )}
                   </div>

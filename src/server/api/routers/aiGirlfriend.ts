@@ -22,11 +22,8 @@ import {
   getUserSessions,
 } from "@/lib/dynamodb";
 import { generateAIResponse } from "@/lib/huggingface-streaming";
-import { AgenticMemoryManager } from "@/lib/components/memory-manager";
-import {
-  getCurrentTimePeriod,
-  getEnergyLevel,
-} from "@/lib/components/temporal-engine";
+import { createAgenticHandler, type AgenticHandler } from "@/lib/components/agentic-handler";
+import type { AgenticMemoryManager } from "@/lib/components/agentic-memory-manager";
 import type {
   ConversationContext,
   Message,
@@ -89,7 +86,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
     };
   }),
 
-  // Send a message and get AI response
+  // Send a message and get AI response (using new agentic system)
   sendMessage: protectedProcedure
     .input(
       z.object({
@@ -126,112 +123,81 @@ export const aiGirlfriendRouter = createTRPCRouter({
         conversation = await getConversation(userId, sessionId);
       }
 
-      // Initialize memory manager for this user
-      const memoryManager = new AgenticMemoryManager();
+      // Create agentic handler with optimized settings
+      const agenticHandler = createAgenticHandler({
+        model: "Orenguteng/Llama-3.1-8B-Lexi-Uncensored-V2",
+        temperature: 0.85,
+        maxTokens: 800,
+        useStreaming: true,
+      });
 
-      // Load user's personality state from DB
-      const personalityState = await getPersonalityState(userId);
+      // Initialize agentic handler with user context
+      await agenticHandler.initialize(userId, sessionId);
 
-      // Set memory manager state
-      if (personalityState) {
-        memoryManager.personalityManager.fromDict(personalityState);
-        memoryManager.memory.user_name = user.name;
-      }
-
-      // Get recent messages for context
+      // Get recent messages for conversation history
       const recentMessages = await getMessages(
         userId,
         sessionId,
         MAX_HISTORY_LENGTH,
       );
 
-      // Analyze and update memory from user message
-      memoryManager.analyzeAndUpdateFromText(message, {
-        user_initiated: true,
-        message_count: conversation?.messageCount || 0,
-      });
-
-      // Build conversation context using memory manager
-      const context = memoryManager.getAgenticContext();
-
-      // Override with current session info
-      context.userId = userId;
-      context.sessionId = sessionId;
-
-      // Get temporal context
-      const temporalEngine = memoryManager.temporalEngine;
-      const timePeriod = temporalEngine.getCurrentTimePeriod();
-      // Context is already built by memory manager
-
-      // Save user message
-      await saveMessage(userId, sessionId, "user", message, {
-        timestamp: new Date().toISOString(),
-      });
-
-      // Deduct credits BEFORE processing (prevents negative credits)
-      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
-
-      // Format messages for Hugging Face (matching Python)
-      const formattedMessages = recentMessages.map((msg) => ({
-        role: msg.role,
+      // Format messages for agentic system
+      const conversationHistory: Message[] = recentMessages.map((msg) => ({
+        id: msg.id || nanoid(),
+        role: msg.role as "user" | "assistant",
         content: msg.content,
+        timestamp: msg.timestamp || new Date().toISOString(),
+        metadata: msg.metadata,
       }));
 
-      // Add current user message
-      formattedMessages.push({
+      // Add current user message to history
+      const userMessage: Message = {
+        id: nanoid(),
         role: "user",
         content: message,
+        timestamp: new Date().toISOString(),
+      };
+      conversationHistory.push(userMessage);
+
+      // Save user message to database
+      await saveMessage(userId, sessionId, "user", message, {
+        timestamp: userMessage.timestamp,
       });
 
-      // Generate AI response using streaming Hugging Face (matching Python)
-      const aiResponse = await generateAIResponse(formattedMessages, context);
+      // Deduct credits BEFORE processing AI response (prevents negative credits)
+      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
 
-      // Combine all message bursts into a single response
+      console.log(`🤖 Generating agentic AI response for user: ${userId}`);
+
+      // Generate AI response using agentic system
+      const aiResponse = await agenticHandler.generateResponse(
+        message,
+        conversationHistory
+      );
+
+      // Combine all message bursts into a single response for storage
       const fullResponse = aiResponse.bursts.map((b) => b.text).join(" ");
 
-      // Save AI response
+      // Save AI response to database
       await saveMessage(userId, sessionId, "assistant", fullResponse, {
         bursts: aiResponse.bursts,
-        emotionalContext: aiResponse.emotionalContext,
         timestamp: new Date().toISOString(),
       });
 
-      // Update personality state and save to database
-      if (aiResponse.personalityUpdate) {
-        const updatedState = {
-          ...personalityState,
-          traits: {
-            ...personalityState.traits,
-            ...aiResponse.personalityUpdate,
-          },
-          interactionCount: (personalityState.interactionCount || 0) + 1,
-          recentTopics: memoryManager.conversation_themes.slice(-10),
-          unfinishedTopics: memoryManager.unresolved_topics,
-          insideJokes: memoryManager.insideJokes,
-          userPreferences: memoryManager.userPreferences,
-          emotionalMoments: memoryManager.emotional_moments,
-          cumSessions: memoryManager.cumSessions,
-          lastCumTime: memoryManager.lastCumTime,
-        };
-        await updatePersonalityState(userId, updatedState);
-      }
-
-      // Save memory state
-      memoryManager.addConversationEntry("You", message);
-      memoryManager.addConversationEntry("Aria", fullResponse, {
-        bursts: aiResponse.bursts,
-        emotionalContext: aiResponse.emotionalContext,
-      });
-      memoryManager.saveData();
+      // Get updated memory context for analytics
+      const agenticContext = agenticHandler.getContext();
 
       // Track analytics
       await trackAnalytics(userId, "message_sent", {
         sessionId,
         messageLength: message.length,
         responseLength: fullResponse.length,
-        emotionalContext: aiResponse.emotionalContext,
+        agenticSystem: true,
+        relationshipStage: agenticContext.relationship_stage,
         creditsUsed: CREDITS_PER_MESSAGE,
       });
+
+      console.log(`✅ Agentic response completed for user: ${userId}`);
 
       return {
         response: aiResponse.bursts,
@@ -306,11 +272,131 @@ export const aiGirlfriendRouter = createTRPCRouter({
         messageCount: user.messageCount,
         sessionCount: user.sessionCount,
       },
-      relationshipStage: personalityState.relationshipStage || "new",
-      interactionCount: personalityState.interactionCount || 0,
-      personalityTraits: personalityState.traits || getDefaultTraits(),
+      relationshipStage: personalityState?.relationshipStage || "comfortable",
+      interactionCount: personalityState?.interactionCount || 0,
+      personalityTraits: personalityState?.traits || getDefaultTraits(),
     };
   }),
+
+  // Legacy sendMessage for fallback (using old streaming system)
+  sendMessageLegacy: protectedProcedure
+    .input(
+      z.object({
+        message: z.string().min(1).max(MAX_MESSAGE_LENGTH),
+        sessionId: z.string(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const { message, sessionId } = input;
+
+      // Check credits first
+      const credits = await getUserCredits(userId);
+      if (credits.credits < CREDITS_PER_MESSAGE) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Insufficient credits",
+        });
+      }
+
+      // Get user for name info
+      const user = await getUser(userId);
+      if (!user) {
+        throw new TRPCError({
+          code: "NOT_FOUND", 
+          message: "User not found",
+        });
+      }
+
+      // Get or create conversation
+      let conversation = await getConversation(userId, sessionId);
+      if (!conversation) {
+        await createConversation(userId, sessionId);
+        conversation = await getConversation(userId, sessionId);
+      }
+
+      // Get recent messages for context
+      const recentMessages = await getMessages(
+        userId,
+        sessionId,
+        MAX_HISTORY_LENGTH,
+      );
+
+      // Build basic conversation context (legacy format)
+      const context: ConversationContext = {
+        userId,
+        sessionId,
+        userName: user.name,
+        relationshipState: {
+          stage: "comfortable",
+          interactionCount: conversation?.messageCount || 0,
+          positiveInteractions: 0,
+          negativeInteractions: 0,
+          trustLevel: 0.7,
+          intimacyLevel: 0.6,
+          communicationQuality: 0.8,
+          sexualChemistry: 0.5,
+          emotionalBond: 0.7,
+          milestones: [],
+          significantMoments: [],
+        },
+        personalityState: getDefaultTraits(),
+        recentTopics: [],
+        unfinishedTopics: [],
+        insideJokes: [],
+        userPreferences: {},
+        emotionalMoments: [],
+        timePeriod: "evening",
+        energyLevel: "medium",
+      };
+
+      // Save user message
+      await saveMessage(userId, sessionId, "user", message, {
+        timestamp: new Date().toISOString(),
+      });
+
+      // Deduct credits BEFORE processing
+      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
+
+      // Format messages for Hugging Face
+      const formattedMessages = recentMessages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      formattedMessages.push({
+        role: "user",
+        content: message,
+      });
+
+      // Generate AI response using legacy streaming
+      const aiResponse = await generateAIResponse(formattedMessages, context);
+
+      // Combine all message bursts into a single response
+      const fullResponse = aiResponse.bursts.map((b) => b.text).join(" ");
+
+      // Save AI response
+      await saveMessage(userId, sessionId, "assistant", fullResponse, {
+        bursts: aiResponse.bursts,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Track analytics
+      await trackAnalytics(userId, "message_sent", {
+        sessionId,
+        messageLength: message.length,
+        responseLength: fullResponse.length,
+        agenticSystem: false,
+        creditsUsed: CREDITS_PER_MESSAGE,
+      });
+
+      return {
+        response: aiResponse.bursts,
+        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        emotionalContext: aiResponse.emotionalContext,
+        relationshipUpdate: aiResponse.relationshipUpdate,
+      };
+    }),
 
   // Get current credits
   getCredits: protectedProcedure.query(async ({ ctx }) => {
