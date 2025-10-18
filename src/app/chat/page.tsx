@@ -138,34 +138,36 @@ export default function ChatPage() {
       return;
     }
 
-    for (const burst of bursts) {
+    for (let i = 0; i < bursts.length; i++) {
+      const burst = bursts[i];
+      
       // Validate burst structure
       if (!burst || typeof burst !== 'object' || !burst.text) {
         continue;
       }
 
-      // Show typing indicator
+      // Show typing dots while waiting
+      setCurrentBurst("");
       await new Promise(resolve => setTimeout(resolve, burst.wait_ms || 800));
 
-      // Add the burst to current typing
+      // Briefly show the message being "typed" (like a preview)
       setCurrentBurst(burst.text);
+      await new Promise(resolve => setTimeout(resolve, 500)); // Show for half a second
 
-      // Small delay to show the text
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Combine all bursts into final message
-    const fullMessage = bursts
-      .filter(b => b && b.text)
-      .map(b => b.text)
-      .join(" ");
-    
-    if (fullMessage.trim()) {
+      // Add this burst as a separate message
       setMessages(prev => [...prev, {
         role: "assistant",
-        content: fullMessage,
+        content: burst.text,
         timestamp: new Date().toISOString(),
       }]);
+
+      // Clear current burst after adding the message
+      setCurrentBurst("");
+      
+      // Small delay between messages (except for the last one)
+      if (i < bursts.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
     }
 
     setCurrentBurst("");

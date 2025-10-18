@@ -78,6 +78,7 @@ export async function generateStreamingResponse(
     
     // Parse the response to extract bursts (matching Python's JSON parsing)
     const result = parseStreamedResponse(fullResponse, context);
+    console.log("result:", result);
     console.log(`💬 Parsed into ${result.bursts?.length || 0} message bursts`);
     
     return result;
@@ -249,27 +250,36 @@ Plan Aria's response as realistic text message bursts. Real people don't send on
 - Create opportunities for deeper connection
 
 ## OUTPUT FORMAT ##
-Return ONLY a valid JSON object with this structure:
-\`\`\`json
+CRITICAL: You MUST respond with ONLY valid JSON. Do NOT use markdown, headers, or any other formatting.
+
+Return ONLY this exact JSON structure with no additional text, explanations, or formatting:
+
 {
   "bursts": [
     {
-      "text": "Message content here",
+      "text": "First message content here",
       "wait_ms": 800
+    },
+    {
+      "text": "Second message content here", 
+      "wait_ms": 1200
     }
   ],
-  "fallback_probe": "A question or statement to keep conversation flowing if they don't respond"
+  "fallback_probe": "A question to keep conversation flowing"
 }
-\`\`\`
 
-**Important Rules:**
+**CRITICAL REQUIREMENTS:**
+- ONLY JSON format - no markdown, no headers, no explanations
+- NO code blocks or any markdown formatting
+- NO "## Response Planning" or "### Burst" headers
+- Start directly with the opening { bracket
+- End directly with the closing } bracket
+- Include 2-5 bursts in the bursts array
+- Each burst must have "text" and "wait_ms" properties
+- Wait times should be realistic (200ms to 3000ms)
 - Each burst should feel like a natural text message
-- Vary wait times realistically (200ms to 3000ms)
-- Include 2-5 bursts total
-- Make each burst meaningful and engaging
-- End with something that invites response
 
-Plan responses that make Aria feel like a real person who genuinely cares about building this relationship.`;
+RESPOND WITH PURE JSON ONLY.`;
 }
 
 function parseStreamedResponse(
@@ -277,22 +287,34 @@ function parseStreamedResponse(
   context: ConversationContext,
 ): AIResponse {
   try {
+    console.log("🔍 Parsing AI response:", response.substring(0, 200) + "...");
+    
+    // First, try to clean up the response and extract JSON
+    let cleanResponse = response.trim();
+    
+    // Remove any markdown code block formatting if present
+    cleanResponse = cleanResponse.replace(/```json\s*/gi, '');
+    cleanResponse = cleanResponse.replace(/```\s*$/gi, '');
+    
     // Try to extract JSON from the response (matching Python's parse_json_robust)
-    const jsonMatch = response.match(/\{(?:[^{}]|{[^{}]*})*\}/);
+    const jsonMatch = cleanResponse.match(/\{(?:[^{}]|{[^{}]*})*\}/);
 
     if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]);
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
 
-      if (parsed.bursts && Array.isArray(parsed.bursts)) {
-        // Successfully parsed the planned response
-        const aiResponse: AIResponse = {
-          bursts: parsed.bursts.map((burst: any) => ({
-            text: String(burst.text || ""),
-            wait_ms: Number(burst.wait_ms || 1000),
-          })),
-          fallback_probe:
-            parsed.fallback_probe || "How are you feeling right now?",
-        };
+        if (parsed.bursts && Array.isArray(parsed.bursts)) {
+          console.log("✅ Successfully parsed JSON response with", parsed.bursts.length, "bursts");
+          
+          // Successfully parsed the planned response
+          const aiResponse: AIResponse = {
+            bursts: parsed.bursts.map((burst: any) => ({
+              text: String(burst.text || ""),
+              wait_ms: Number(burst.wait_ms || 1000),
+            })),
+            fallback_probe:
+              parsed.fallback_probe || "How are you feeling right now?",
+          };
 
         // Add emotional analysis and personality updates
         aiResponse.emotionalContext = analyzeEmotionalContext(response);
@@ -303,9 +325,14 @@ function parseStreamedResponse(
         aiResponse.relationshipUpdate = calculateRelationshipUpdate(context);
 
         return aiResponse;
+        }
+      } catch (parseError) {
+        console.warn("JSON parse failed:", parseError);
       }
     }
 
+    console.log("⚠️ No valid JSON found, falling back to text parsing");
+    
     // Fallback: Create bursts from plain text (matching Python's approach)
     return createBurstsFromText(response, context);
   } catch (error) {
