@@ -6,15 +6,18 @@ import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
 const config = {
-  experimental: {
-    turbo: {
-      resolveAlias: {
-        'lightningcss': false,
-      },
-    },
-  },
   env: {
     LIGHTNINGCSS_EXPERIMENTAL: 'false',
+  },
+  webpack: (config, { isServer }) => {
+    // Add fallback for lightningcss on server side
+    if (!isServer) {
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        lightningcss: false,
+      };
+    }
+    return config;
   },
 };
 
