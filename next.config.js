@@ -5,6 +5,17 @@
 import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
-const config = {};
+const config = {
+  experimental: {
+    turbo: {
+      resolveAlias: {
+        'lightningcss': false,
+      },
+    },
+  },
+  env: {
+    LIGHTNINGCSS_EXPERIMENTAL: 'false',
+  },
+};
 
 export default config;
