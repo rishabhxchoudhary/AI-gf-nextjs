@@ -166,50 +166,142 @@ Make them feel natural and authentic to how someone would actually continue this
     relationshipContext: RelationshipContext
   ): IceBreaker[] {
     try {
-      // Try to extract JSON
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        
-        if (parsed.ice_breakers && Array.isArray(parsed.ice_breakers)) {
-          return parsed.ice_breakers.map((iceBreaker: any, index: number) => ({
-            id: `ice_${Date.now()}_${index}`,
-            text: iceBreaker.text || iceBreaker.message || "How are you feeling?",
-            type: this.validateIceBreakerType(iceBreaker.type),
-            mood: iceBreaker.mood || "curious",
-            priority: this.calculatePriority(iceBreaker, relationshipContext)
-          }));
+      console.log(`🧊 Raw response text: ${responseText.substring(0, 500)}...`);
+
+      // Multiple attempts to extract and parse JSON
+      let parsed: { ice_breakers?: Array<{ text?: string; type?: string; mood?: string; message?: string }> } | null = null;
+
+      // Method 1: Try to find complete JSON block
+      const jsonBlockMatch = responseText.match(/\{[\s\S]*?"ice_breakers"[\s\S]*?\][\s\S]*?\}/);
+      if (jsonBlockMatch) {
+        try {
+          parsed = JSON.parse(jsonBlockMatch[0]);
+          console.log("🧊 Successfully parsed with method 1");
+        } catch (e) {
+          console.log("🧊 Method 1 failed, trying method 2");
         }
       }
 
-      // Fallback: try to parse line by line
-      const lines = responseText.split('\n').filter(line => line.trim().length > 0);
-      const iceBreakers: IceBreaker[] = [];
-
-      for (let i = 0; i < lines.length && iceBreakers.length < 3; i++) {
-        const line = lines[i]?.trim();
-        if (line && line.length > 10 && !line.startsWith('#') && !line.startsWith('*')) {
-          // Remove quotes and numbering
-          const cleanText = line.replace(/^\d+\.?\s*/, '').replace(/^["']|["']$/g, '');
-          
-          if (cleanText.length > 5) {
-            iceBreakers.push({
-              id: `ice_fallback_${Date.now()}_${i}`,
-              text: cleanText,
-              type: this.inferIceBreakerType(cleanText),
-              mood: "curious",
-              priority: 1
-            });
+      // Method 2: Try to find just the ice_breakers array
+      if (!parsed) {
+        const arrayMatch = responseText.match(/"ice_breakers"\s*:\s*\[([\s\S]*?)\]/);
+        if (arrayMatch) {
+          try {
+            const arrayContent = `[${arrayMatch[1]}]`;
+            const iceBreakerArray = JSON.parse(arrayContent);
+            parsed = { ice_breakers: iceBreakerArray };
+            console.log("🧊 Successfully parsed with method 2");
+          } catch (e) {
+            console.log("🧊 Method 2 failed, trying method 3");
           }
         }
       }
 
-      return iceBreakers;
+      // Method 3: Try to extract individual ice breaker objects
+      if (!parsed) {
+        const objectMatches = responseText.match(/\{\s*"text"\s*:\s*"[^"]*"[\s\S]*?\}/g);
+        if (objectMatches && objectMatches.length > 0) {
+          try {
+            const validObjects = objectMatches.map(match => {
+              try {
+                return JSON.parse(match);
+              } catch {
+                return null;
+              }
+            }).filter(obj => obj?.text);
+            
+            if (validObjects.length > 0) {
+              parsed = { ice_breakers: validObjects };
+              console.log("🧊 Successfully parsed with method 3");
+            }
+          } catch (e) {
+            console.log("🧊 Method 3 failed, using fallback");
+          }
+        }
+      }
+
+      // If we successfully parsed JSON, use it
+      if (parsed?.ice_breakers && Array.isArray(parsed.ice_breakers)) {
+        console.log(`🧊 Found ${parsed.ice_breakers.length} ice breakers in JSON`);
+        return parsed.ice_breakers.map((iceBreaker, index: number) => ({
+          id: `ice_${Date.now()}_${index}`,
+          text: iceBreaker.text || iceBreaker.message || "How are you feeling?",
+          type: this.validateIceBreakerType(iceBreaker.type || "question"),
+          mood: iceBreaker.mood || "curious",
+          priority: this.calculatePriority(iceBreaker, relationshipContext)
+        }));
+      }
+
+      // Fallback: Create ice breakers from text patterns
+      console.log("🧊 Using fallback text parsing");
+      return this.createFallbackIceBreakers(responseText, relationshipContext);
 
     } catch (error) {
       console.error("Ice breaker parsing failed:", error);
-      return [];
+      return this.createFallbackIceBreakers(responseText, relationshipContext);
     }
+  }
+
+  private createFallbackIceBreakers(
+    responseText: string, 
+    relationshipContext: RelationshipContext
+  ): IceBreaker[] {
+    // Extract meaningful sentences from the response
+    const sentences = responseText
+      .split(/[.!?]+/)
+      .map(s => s.trim())
+      .filter(s => s.length > 15 && s.length < 150)
+      .slice(0, 3);
+
+    if (sentences.length === 0) {
+      // Ultimate fallback - generate contextual ice breakers
+      return this.generateContextualFallbacks(relationshipContext);
+    }
+
+    return sentences.map((sentence, index) => ({
+      id: `ice_fallback_${Date.now()}_${index}`,
+      text: sentence.replace(/^["']|["']$/g, '').trim(),
+      type: this.inferIceBreakerType(sentence),
+      mood: "curious",
+      priority: 1
+    }));
+  }
+
+  private generateContextualFallbacks(relationshipContext: RelationshipContext): IceBreaker[] {
+    const stage = relationshipContext.current_stage;
+    
+    const fallbacks = {
+      new: [
+        { text: "What's been on your mind lately?", type: "question" as const },
+        { text: "You seem really interesting... tell me more about yourself", type: "compliment" as const },
+        { text: "I'd love to know what makes you happy", type: "supportive" as const }
+      ],
+      comfortable: [
+        { text: "Remember that funny thing we talked about?", type: "playful" as const },
+        { text: "What's your favorite way to spend a lazy day?", type: "question" as const },
+        { text: "I love how you think about things differently", type: "compliment" as const }
+      ],
+      intimate: [
+        { text: "I've been thinking about you...", type: "flirty" as const },
+        { text: "What would make you feel most loved right now?", type: "intimate" as const },
+        { text: "You always know how to make me smile", type: "compliment" as const }
+      ],
+      established: [
+        { text: "What's something new you'd like to try together?", type: "intimate" as const },
+        { text: "I love how comfortable we've become with each other", type: "compliment" as const },
+        { text: "What's your favorite memory of us?", type: "question" as const }
+      ]
+    } as const;
+
+    const contextualFallbacks = fallbacks[stage] || fallbacks.comfortable;
+    
+    return contextualFallbacks.map((fallback: { text: string; type: IceBreaker["type"] }, index: number) => ({
+      id: `ice_contextual_${Date.now()}_${index}`,
+      text: fallback.text,
+      type: fallback.type,
+      mood: "curious",
+      priority: 1
+    }));
   }
 
   private validateIceBreakerType(type: string): IceBreaker["type"] {
@@ -243,7 +335,7 @@ Make them feel natural and authentic to how someone would actually continue this
   }
 
   private calculatePriority(
-    iceBreaker: any,
+    iceBreaker: { text?: string; type?: string; mood?: string },
     relationshipContext: RelationshipContext
   ): number {
     let priority = 1;
@@ -251,16 +343,18 @@ Make them feel natural and authentic to how someone would actually continue this
     // Higher priority for types that match relationship stage
     const stage = relationshipContext.current_stage;
     
-    if (stage === "new" && ["question", "compliment", "supportive"].includes(iceBreaker.type)) {
+    const type = iceBreaker.type || "question";
+    
+    if (stage === "new" && ["question", "compliment", "supportive"].includes(type)) {
       priority += 1;
     }
-    if (stage === "comfortable" && ["playful", "question", "compliment"].includes(iceBreaker.type)) {
+    if (stage === "comfortable" && ["playful", "question", "compliment"].includes(type)) {
       priority += 1;
     }
-    if (stage === "intimate" && ["intimate", "flirty", "supportive"].includes(iceBreaker.type)) {
+    if (stage === "intimate" && ["intimate", "flirty", "supportive"].includes(type)) {
       priority += 1;
     }
-    if (stage === "established" && ["intimate", "playful", "flirty"].includes(iceBreaker.type)) {
+    if (stage === "established" && ["intimate", "playful", "flirty"].includes(type)) {
       priority += 1;
     }
 

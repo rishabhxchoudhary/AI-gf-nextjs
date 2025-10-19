@@ -1,4 +1,4 @@
-import { TimePeriod, EnergyLevel } from "@/types/ai-girlfriend";
+import type { TimePeriod, EnergyLevel } from "@/types/ai-girlfriend";
 
 interface TimeMood {
   energy: number;
@@ -146,7 +146,16 @@ export class TemporalEngine {
       timePeriod = this.getCurrentTimePeriod();
     }
 
-    return this.timeBasedMoods[timePeriod] || this.timeBasedMoods.evening;
+    return (
+      this.timeBasedMoods[timePeriod] ||
+      this.timeBasedMoods.evening || {
+        energy: 0.7,
+        romantic_intensity: 1.0,
+        playfulness: 0.6,
+        vulnerability: 0.5,
+        sleepiness: 0.3,
+      }
+    );
   }
 
   getAppropriateGreeting(
@@ -157,12 +166,13 @@ export class TemporalEngine {
       timePeriod = this.getCurrentTimePeriod();
     }
 
-    const greetings =
-      this.timeGreetings[timePeriod] || this.timeGreetings.evening;
-    let baseGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+    const greetings = this.timeGreetings[timePeriod] ||
+      this.timeGreetings.evening || ["Hey there!"];
+    let baseGreeting =
+      greetings[Math.floor(Math.random() * greetings.length)] || "Hey there!";
 
     // Personalize with name if available
-    if (userName && userName !== "babe") {
+    if (userName && userName !== "babe" && baseGreeting) {
       baseGreeting = baseGreeting.replace("babe", userName);
     }
 
@@ -174,7 +184,8 @@ export class TemporalEngine {
       timePeriod = this.getCurrentTimePeriod();
     }
 
-    const energyValue = this.timeBasedMoods[timePeriod].energy;
+    const timeMood = this.timeBasedMoods[timePeriod];
+    const energyValue = timeMood ? timeMood.energy : 0.7;
 
     if (energyValue >= 0.7) {
       return "high";
@@ -210,6 +221,9 @@ export class TemporalEngine {
 
     // Adjust emoji frequency based on energy
     const energySettings = this.energyLanguage[energyLevel];
+    if (!energySettings) {
+      return response;
+    }
     const currentEmojiCount = (response.match(/[\u{1F300}-\u{1FAD6}]/gu) || [])
       .length;
     const targetFrequency = energySettings.emoji_frequency;
@@ -324,10 +338,16 @@ export class TemporalEngine {
     };
 
     const templates =
-      greetingTemplates[timeContext.appropriate_greeting] ||
-      greetingTemplates.miss_you;
+      greetingTemplates[
+        timeContext.appropriate_greeting as keyof typeof greetingTemplates
+      ] || greetingTemplates.miss_you;
 
-    return templates[Math.floor(Math.random() * templates.length)];
+    if (!templates || templates.length === 0) {
+      return "hey babe 💕";
+    }
+    const selectedTemplate =
+      templates[Math.floor(Math.random() * templates.length)];
+    return selectedTemplate || "hey babe 💕";
   }
 
   trackUserActivity(timestamp: string): void {

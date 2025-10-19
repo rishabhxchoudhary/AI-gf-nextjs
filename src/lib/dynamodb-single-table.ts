@@ -1,5 +1,13 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, QueryCommand, BatchWriteCommand, TransactWriteCommand } from "@aws-sdk/lib-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+  QueryCommand,
+  BatchWriteCommand,
+  TransactWriteCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { nanoid } from "nanoid";
 
 // Initialize DynamoDB client
@@ -14,7 +22,8 @@ const client = new DynamoDBClient({
 export const dynamoDB = DynamoDBDocumentClient.from(client);
 
 // Single table name
-export const TABLE_NAME = process.env.DYNAMODB_TABLE_NAME || "ai-girlfriend-table";
+export const TABLE_NAME =
+  process.env.DYNAMODB_TABLE_NAME || "ai-girlfriend-table";
 
 // Entity types for better type safety
 export const EntityType = {
@@ -129,7 +138,9 @@ export async function createUser(userId: string, email: string, name?: string) {
     },
   ];
 
-  await dynamoDB.send(new TransactWriteCommand({ TransactItems: transactItems }));
+  await dynamoDB.send(
+    new TransactWriteCommand({ TransactItems: transactItems }),
+  );
 }
 
 export async function getUser(userId: string) {
@@ -138,7 +149,7 @@ export async function getUser(userId: string) {
     new GetCommand({
       TableName: TABLE_NAME,
       Key: { pk, sk },
-    })
+    }),
   );
   return response.Item;
 }
@@ -150,22 +161,22 @@ export async function getUserWithCredits(userId: string) {
       new GetCommand({
         TableName: TABLE_NAME,
         Key: keys.user(userId),
-      })
+      }),
     ),
     dynamoDB.send(
       new GetCommand({
         TableName: TABLE_NAME,
         Key: keys.userCredits(userId),
-      })
+      }),
     ),
   ]);
 
   const user = userResponse.Item;
-  const credits = creditsResponse.Item || {
-    credits: 100,
-    totalCreditsUsed: 0,
-    lastUpdated: new Date().toISOString(),
-  };
+  const credits = creditsResponse.Item; // No fallback - return actual data
+
+  if (!user || !credits) {
+    return null; // User or credits not found
+  }
 
   return { ...user, ...credits };
 }
@@ -180,15 +191,11 @@ export async function getUserCredits(userId: string) {
     new GetCommand({
       TableName: TABLE_NAME,
       Key: { pk, sk },
-    })
+    }),
   );
-  
-  // Return default credits structure if not found (fallback)
-  return response.Item || {
-    credits: 100,
-    totalCreditsUsed: 0,
-    lastUpdated: new Date().toISOString(),
-  };
+
+  // Return actual credits from database or null if not found
+  return response.Item || null;
 }
 
 export async function addCredits(userId: string, creditsToAdd: number) {
@@ -205,7 +212,7 @@ export async function addCredits(userId: string, creditsToAdd: number) {
         ":now": timestamp,
       },
       ReturnValues: "ALL_NEW",
-    })
+    }),
   );
 
   return response.Attributes;
@@ -215,36 +222,51 @@ export async function updateUserCredits(userId: string, creditsUsed: number) {
   const { pk, sk } = keys.userCredits(userId);
   const timestamp = new Date().toISOString();
 
-  const response = await dynamoDB.send(
-    new UpdateCommand({
-      TableName: TABLE_NAME,
-      Key: { pk, sk },
-      UpdateExpression: "ADD credits :negUsed, totalCreditsUsed :used SET lastUpdated = :now",
-      ConditionExpression: "credits >= :minCredits",
-      ExpressionAttributeValues: {
-        ":negUsed": -creditsUsed, // Subtract credits by adding negative value
-        ":used": creditsUsed,
-        ":now": timestamp,
-        ":minCredits": creditsUsed, // Ensure user has enough credits
-      },
-      ReturnValues: "ALL_NEW",
-    })
-  );
+  try {
+    const response = await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: { pk, sk },
+        UpdateExpression:
+          "ADD credits :negUsed, totalCreditsUsed :used SET lastUpdated = :now",
+        ConditionExpression: "credits >= :minCredits",
+        ExpressionAttributeValues: {
+          ":negUsed": -creditsUsed, // Subtract credits by adding negative value
+          ":used": creditsUsed,
+          ":now": timestamp,
+          ":minCredits": creditsUsed, // Ensure user has enough credits
+        },
+        ReturnValues: "ALL_NEW",
+      }),
+    );
 
-  // Also update user's last active timestamp
-  await dynamoDB.send(
-    new UpdateCommand({
-      TableName: TABLE_NAME,
-      Key: keys.user(userId),
-      UpdateExpression: "SET lastActiveAt = :now ADD messageCount :one",
-      ExpressionAttributeValues: {
-        ":now": timestamp,
-        ":one": 1,
-      },
-    })
-  );
+    // Also update user's last active timestamp
+    await dynamoDB.send(
+      new UpdateCommand({
+        TableName: TABLE_NAME,
+        Key: keys.user(userId),
+        UpdateExpression: "SET lastActiveAt = :now ADD messageCount :one",
+        ExpressionAttributeValues: {
+          ":now": timestamp,
+          ":one": 1,
+        },
+      }),
+    );
 
-  return response.Attributes;
+    return response.Attributes;
+  } catch (error: any) {
+    // Handle conditional check failed error
+    if (error.name === "ConditionalCheckFailedException") {
+      // Get current credits to provide better error info
+      const currentCredits = await getUserCredits(userId);
+      const creditsAmount = currentCredits?.credits ?? 0;
+      throw new Error(
+        `Insufficient credits. Current: ${creditsAmount}, Required: ${creditsUsed}`,
+      );
+    }
+    // Re-throw other errors
+    throw error;
+  }
 }
 
 // ===========================
@@ -277,7 +299,7 @@ export async function createSession(userId: string, sessionId: string) {
         gsi2pk: `USER_SESSIONS#${userId}`,
         gsi2sk: timestamp,
       },
-    })
+    }),
   );
 
   // Update user's session count
@@ -289,7 +311,7 @@ export async function createSession(userId: string, sessionId: string) {
       ExpressionAttributeValues: {
         ":one": 1,
       },
-    })
+    }),
   );
 }
 
@@ -299,7 +321,7 @@ export async function getSession(userId: string, sessionId: string) {
     new GetCommand({
       TableName: TABLE_NAME,
       Key: { pk, sk },
-    })
+    }),
   );
   return response.Item;
 }
@@ -315,7 +337,7 @@ export async function getUserSessions(userId: string, limit = 10) {
       },
       ScanIndexForward: false, // Most recent first
       Limit: limit,
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -329,7 +351,7 @@ export async function saveMessage(
   sessionId: string,
   role: "user" | "assistant",
   content: string,
-  metadata?: any
+  metadata?: any,
 ) {
   const timestamp = new Date().toISOString();
   const messageId = nanoid();
@@ -356,7 +378,7 @@ export async function saveMessage(
         gsi2pk: "ALL_MESSAGES",
         gsi2sk: timestamp,
       },
-    })
+    }),
   );
 
   // Update session's last message time
@@ -369,7 +391,7 @@ export async function saveMessage(
         ":now": timestamp,
         ":one": 1,
       },
-    })
+    }),
   );
 
   return messageId;
@@ -386,7 +408,7 @@ export async function getSessionMessages(sessionId: string, limit = 20) {
       },
       ScanIndexForward: false, // Most recent first
       Limit: limit,
-    })
+    }),
   );
 
   // Reverse to get chronological order
@@ -404,7 +426,7 @@ export async function getUserMessages(userId: string, limit = 50) {
       },
       ScanIndexForward: false,
       Limit: limit,
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -419,7 +441,7 @@ export async function getPersonalityState(userId: string) {
     new GetCommand({
       TableName: TABLE_NAME,
       Key: { pk, sk },
-    })
+    }),
   );
   return response.Item || getDefaultPersonalityState();
 }
@@ -438,7 +460,7 @@ export async function updatePersonalityState(userId: string, updates: any) {
         ...updates,
         updatedAt: timestamp,
       },
-    })
+    }),
   );
 }
 
@@ -475,10 +497,19 @@ function getDefaultPersonalityState() {
 // ANALYTICS
 // ===========================
 
-export async function trackAnalytics(userId: string, eventType: string, eventData: any) {
+export async function trackAnalytics(
+  userId: string,
+  eventType: string,
+  eventData: any,
+) {
   const timestamp = new Date().toISOString();
   const date = timestamp.split("T")[0];
   const eventId = nanoid();
+
+  // Validate date is defined
+  if (!date) {
+    throw new Error("Failed to extract date from timestamp");
+  }
 
   // Store analytics event
   const { pk, sk } = keys.analytics(date, timestamp, eventId);
@@ -502,7 +533,7 @@ export async function trackAnalytics(userId: string, eventType: string, eventDat
         gsi2pk: `USER_ANALYTICS#${userId}`,
         gsi2sk: timestamp,
       },
-    })
+    }),
   );
 
   // Update daily statistics
@@ -510,6 +541,9 @@ export async function trackAnalytics(userId: string, eventType: string, eventDat
 }
 
 async function updateDailyStats(date: string, eventType: string) {
+  if (!date) {
+    throw new Error("Date is required for updating daily stats");
+  }
   const { pk, sk } = keys.dailyStats(date, eventType);
 
   try {
@@ -517,7 +551,8 @@ async function updateDailyStats(date: string, eventType: string) {
       new UpdateCommand({
         TableName: TABLE_NAME,
         Key: { pk, sk },
-        UpdateExpression: "SET #count = if_not_exists(#count, :zero) + :one, entityType = :type",
+        UpdateExpression:
+          "SET #count = if_not_exists(#count, :zero) + :one, entityType = :type",
         ExpressionAttributeNames: {
           "#count": "count",
         },
@@ -526,7 +561,7 @@ async function updateDailyStats(date: string, eventType: string) {
           ":one": 1,
           ":type": EntityType.DAILY_STATS,
         },
-      })
+      }),
     );
   } catch (error) {
     // If update fails, create the record
@@ -541,7 +576,7 @@ async function updateDailyStats(date: string, eventType: string) {
           eventType,
           count: 1,
         },
-      })
+      }),
     );
   }
 }
@@ -561,7 +596,7 @@ export async function getAllUsers(limit = 100) {
       },
       ScanIndexForward: false,
       Limit: limit,
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -577,7 +612,7 @@ export async function getRecentAnalytics(limit = 100) {
       },
       ScanIndexForward: false,
       Limit: limit,
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -593,7 +628,7 @@ export async function getUserAnalytics(userId: string, limit = 100) {
       },
       ScanIndexForward: false,
       Limit: limit,
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -606,7 +641,7 @@ export async function getDailyStats(date: string) {
       ExpressionAttributeValues: {
         ":pk": `STATS#${date}`,
       },
-    })
+    }),
   );
   return response.Items || [];
 }
@@ -621,7 +656,9 @@ export async function getDateRangeStats(startDate: string, endDate: string) {
     current.setDate(current.getDate() + 1);
   }
 
-  const promises = dates.map(date => getDailyStats(date));
+  const promises = dates
+    .filter((date): date is string => date != null)
+    .map((date) => getDailyStats(date));
   const results = await Promise.all(promises);
 
   return results.flat();
@@ -643,13 +680,17 @@ export async function batchGetItems(keys: Array<{ pk: string; sk: string }>) {
     const response = await dynamoDB.send(
       new BatchWriteCommand({
         RequestItems: {
-          [TABLE_NAME]: {
-            Keys: chunk.map(key => ({ pk: key.pk, sk: key.sk })),
-          },
+          [TABLE_NAME]: chunk.map((key) => ({
+            DeleteRequest: {
+              Key: { pk: key.pk, sk: key.sk },
+            },
+          })),
         },
-      })
+      }),
     );
-    results.push(...(response.Responses?.[TABLE_NAME] || []));
+
+    const commandOutput = response as any;
+    results.push(...(commandOutput.UnprocessedItems?.[TABLE_NAME] || []));
   }
 
   return results;

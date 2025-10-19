@@ -1,5 +1,5 @@
 import { HfInference } from "@huggingface/inference";
-import {
+import type {
   AIResponse,
   ConversationContext,
   EmotionalState,
@@ -33,9 +33,13 @@ export async function generateStreamingResponse(
 ): Promise<AIResponse> {
   try {
     console.log(`🤖 Using Streaming AI Model: ${DEFAULT_MODEL}`);
-    console.log(`🌊 Streaming Config: temp=${DEFAULT_TEMPERATURE}, fallbacks=${FALLBACK_MODELS.length} models`);
-    console.log(`📝 Message Count: ${messages.length}, Context: ${context.relationshipState.stage} relationship`);
-    
+    console.log(
+      `🌊 Streaming Config: temp=${DEFAULT_TEMPERATURE}, fallbacks=${FALLBACK_MODELS.length} models`,
+    );
+    console.log(
+      `📝 Message Count: ${messages.length}, Context: ${context.relationshipState.stage} relationship`,
+    );
+
     // Build the exact message format like Python
     const systemPrompt = buildSystemPrompt(context);
     const plannerPrompt = buildPlannerPrompt(
@@ -75,12 +79,12 @@ export async function generateStreamingResponse(
     }
 
     console.log(`📊 Response generated: ${fullResponse.length} characters`);
-    
+
     // Parse the response to extract bursts (matching Python's JSON parsing)
     const result = parseStreamedResponse(fullResponse, context);
     console.log("result:", result);
     console.log(`💬 Parsed into ${result.bursts?.length || 0} message bursts`);
-    
+
     return result;
   } catch (error) {
     console.error("❌ Primary streaming model error:", error);
@@ -94,13 +98,15 @@ async function fallbackGeneration(
   context: ConversationContext,
   onToken?: (token: string) => void,
 ): Promise<AIResponse> {
-  console.log(`⚠️ Primary model failed, trying ${FALLBACK_MODELS.length} fallback models...`);
-  
+  console.log(
+    `⚠️ Primary model failed, trying ${FALLBACK_MODELS.length} fallback models...`,
+  );
+
   // Try each fallback model
   for (const model of FALLBACK_MODELS) {
     try {
       console.log(`🔄 Attempting fallback model: ${model}`);
-      
+
       const stream = client.chatCompletionStream({
         model,
         messages: messages as any,
@@ -261,7 +267,7 @@ Return ONLY this exact JSON structure with no additional text, explanations, or 
       "wait_ms": 800
     },
     {
-      "text": "Second message content here", 
+      "text": "Second message content here",
       "wait_ms": 1200
     }
   ],
@@ -288,14 +294,14 @@ function parseStreamedResponse(
 ): AIResponse {
   try {
     console.log("🔍 Parsing AI response:", response.substring(0, 200) + "...");
-    
+
     // First, try to clean up the response and extract JSON
     let cleanResponse = response.trim();
-    
+
     // Remove any markdown code block formatting if present
-    cleanResponse = cleanResponse.replace(/```json\s*/gi, '');
-    cleanResponse = cleanResponse.replace(/```\s*$/gi, '');
-    
+    cleanResponse = cleanResponse.replace(/```json\s*/gi, "");
+    cleanResponse = cleanResponse.replace(/```\s*$/gi, "");
+
     // Try to extract JSON from the response (matching Python's parse_json_robust)
     const jsonMatch = cleanResponse.match(/\{(?:[^{}]|{[^{}]*})*\}/);
 
@@ -304,8 +310,12 @@ function parseStreamedResponse(
         const parsed = JSON.parse(jsonMatch[0]);
 
         if (parsed.bursts && Array.isArray(parsed.bursts)) {
-          console.log("✅ Successfully parsed JSON response with", parsed.bursts.length, "bursts");
-          
+          console.log(
+            "✅ Successfully parsed JSON response with",
+            parsed.bursts.length,
+            "bursts",
+          );
+
           // Successfully parsed the planned response
           const aiResponse: AIResponse = {
             bursts: parsed.bursts.map((burst: any) => ({
@@ -316,15 +326,15 @@ function parseStreamedResponse(
               parsed.fallback_probe || "How are you feeling right now?",
           };
 
-        // Add emotional analysis and personality updates
-        aiResponse.emotionalContext = analyzeEmotionalContext(response);
-        aiResponse.personalityUpdate = calculatePersonalityUpdate(
-          response,
-          context,
-        );
-        aiResponse.relationshipUpdate = calculateRelationshipUpdate(context);
+          // Add emotional analysis and personality updates
+          aiResponse.emotionalContext = analyzeEmotionalContext(response);
+          aiResponse.personalityUpdate = calculatePersonalityUpdate(
+            response,
+            context,
+          );
+          aiResponse.relationshipUpdate = calculateRelationshipUpdate(context);
 
-        return aiResponse;
+          return aiResponse;
         }
       } catch (parseError) {
         console.warn("JSON parse failed:", parseError);
@@ -332,7 +342,7 @@ function parseStreamedResponse(
     }
 
     console.log("⚠️ No valid JSON found, falling back to text parsing");
-    
+
     // Fallback: Create bursts from plain text (matching Python's approach)
     return createBurstsFromText(response, context);
   } catch (error) {

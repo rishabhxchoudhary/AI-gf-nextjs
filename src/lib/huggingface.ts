@@ -1,5 +1,5 @@
 import { HfInference } from "@huggingface/inference";
-import {
+import type {
   AIConfig,
   AIResponse,
   ConversationContext,
@@ -48,8 +48,10 @@ export async function generateAIResponse(
 ): Promise<AIResponse> {
   try {
     console.log(`🤖 Using AI Model: ${DEFAULT_AI_CONFIG.model}`);
-    console.log(`📊 Model Config: temp=${DEFAULT_AI_CONFIG.temperature}, maxTokens=${DEFAULT_AI_CONFIG.maxTokens}`);
-    
+    console.log(
+      `📊 Model Config: temp=${DEFAULT_AI_CONFIG.temperature}, maxTokens=${DEFAULT_AI_CONFIG.maxTokens}`,
+    );
+
     const systemPrompt = buildSystemPrompt(context);
     const plannerPrompt = buildPlannerPrompt(userMessage, context);
 
@@ -270,7 +272,17 @@ function getFallbackResponse(): AIResponse {
     },
   ];
 
-  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  const selectedFallback =
+    fallbacks[Math.floor(Math.random() * fallbacks.length)];
+  return (
+    selectedFallback || {
+      bursts: [
+        { text: "hey babe", wait_ms: 400 },
+        { text: "I'm here for you 💕", wait_ms: 900 },
+      ],
+      fallback_probe: "what's on your mind?",
+    }
+  );
 }
 
 function describePersonality(traits: PersonalityTraits): string {

@@ -1,8 +1,8 @@
-import {
+import type {
   ConversationContext,
   EmotionalState,
   PersonalityTraits,
-  RelationshipState
+  RelationshipState,
 } from "@/types/ai-girlfriend";
 import { PersonalityManager } from "./personality-manager";
 import { RelationshipTracker } from "./relationship-tracker";
@@ -58,9 +58,11 @@ export class AgenticMemoryManager {
   conversation_themes: string[];
   emotional_moments: Array<{
     timestamp: string;
+    description: string;
     emotion: string;
-    context: string;
+    context?: string;
     intensity: number;
+    resolved: boolean;
   }>;
 
   // Track cum sessions (from Python)
@@ -132,12 +134,12 @@ export class AgenticMemoryManager {
       personality_quirks: this.personalityQuirks.toDict(),
       cum_sessions: this.cumSessions,
       last_cum_time: this.lastCumTime,
-      last_updated: new Date().toISOString()
+      last_updated: new Date().toISOString(),
     };
 
     // Save logic here
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('ai_gf_memory', JSON.stringify(saveData));
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ai_gf_memory", JSON.stringify(saveData));
     }
   }
 
@@ -149,7 +151,7 @@ export class AgenticMemoryManager {
 
     // Analyze themes
     const themes = this.analyzeConversationThemes(text);
-    themes.forEach(theme => {
+    themes.forEach((theme) => {
       if (!this.conversation_themes.includes(theme)) {
         this.conversation_themes.push(theme);
       }
@@ -160,9 +162,11 @@ export class AgenticMemoryManager {
     if (emotionalContext.intensity > 0.5) {
       this.emotional_moments.push({
         timestamp: new Date().toISOString(),
+        description: text.substring(0, 100),
         emotion: emotionalContext.primary,
         context: text.substring(0, 100),
-        intensity: emotionalContext.intensity
+        intensity: emotionalContext.intensity,
+        resolved: false,
       });
 
       // Keep only last 50 emotional moments
@@ -184,13 +188,22 @@ export class AgenticMemoryManager {
     this.temporalEngine.trackUserActivity(new Date().toISOString());
 
     // Check for cum session mentions (from Python)
-    if (textLower.includes("cum") || textLower.includes("came") || textLower.includes("orgasm")) {
+    if (
+      textLower.includes("cum") ||
+      textLower.includes("came") ||
+      textLower.includes("orgasm")
+    ) {
       this.cumSessions++;
       this.lastCumTime = new Date().toISOString();
     }
 
     // Update deep memory
-    this.deepMemory.storeMemory(text, "conversation", emotionalContext.primary, emotionalContext.intensity);
+    this.deepMemory.storeMemory(
+      text,
+      "conversation",
+      emotionalContext.primary,
+      emotionalContext.intensity,
+    );
 
     this.saveData();
   }
@@ -199,29 +212,42 @@ export class AgenticMemoryManager {
     const textLower = text.toLowerCase();
 
     // Extract name
-    const nameMatch = text.match(/(?:my name is|i'm|i am|call me)\s+([A-Z][a-z]+)/i);
-    if (nameMatch) {
+    const nameMatch = text.match(
+      /(?:my name is|i'm|i am|call me)\s+([A-Z][a-z]+)/i,
+    );
+    if (nameMatch && nameMatch[1]) {
       this.memory.user_name = nameMatch[1];
     }
 
     // Extract age
-    const ageMatch = text.match(/(?:i'm|i am|im)\s+(\d{1,2})\s+(?:years old|yo)/i);
-    if (ageMatch) {
+    const ageMatch = text.match(
+      /(?:i'm|i am|im)\s+(\d{1,2})\s+(?:years old|yo)/i,
+    );
+    if (ageMatch && ageMatch[1]) {
       this.memory.user_age = parseInt(ageMatch[1]);
     }
 
     // Extract location
-    const locationMatch = text.match(/(?:i'm from|i live in|from|in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-    if (locationMatch) {
+    const locationMatch = text.match(
+      /(?:i'm from|i live in|from|in)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i,
+    );
+    if (locationMatch && locationMatch[1]) {
       this.memory.user_location = locationMatch[1];
     }
 
     // Extract interests
-    const interestKeywords = ["like", "love", "enjoy", "interested in", "passionate about"];
-    interestKeywords.forEach(keyword => {
-      const regex = new RegExp(`(?:i ${keyword})\\s+(.+?)(?:\\.|,|!|$)`, 'gi');
+    const interestKeywords = [
+      "like",
+      "love",
+      "enjoy",
+      "interested in",
+      "passionate about",
+    ];
+    interestKeywords.forEach((keyword) => {
+      const regex = new RegExp(`(?:i ${keyword})\\s+(.+?)(?:\\.|,|!|$)`, "gi");
       const matches = text.matchAll(regex);
       for (const match of matches) {
+        if (!match[1]) continue;
         const interest = match[1].trim();
         if (!this.memory.interests) {
           this.memory.interests = [];
@@ -238,20 +264,44 @@ export class AgenticMemoryManager {
     const textLower = text.toLowerCase();
 
     const themeKeywords: Record<string, string[]> = {
-      "work": ["work", "job", "boss", "colleague", "office", "project", "meeting"],
-      "relationships": ["girlfriend", "boyfriend", "dating", "love", "relationship", "partner"],
-      "family": ["family", "mom", "dad", "mother", "father", "sister", "brother"],
-      "health": ["health", "sick", "doctor", "hospital", "pain", "medical"],
-      "emotions": ["happy", "sad", "angry", "stressed", "anxious", "excited"],
-      "future": ["future", "plan", "goal", "dream", "hope", "want"],
-      "past": ["remember", "used to", "before", "memory", "past"],
-      "sexual": ["sex", "horny", "hot", "kiss", "touch", "want you", "bed", "fuck"],
-      "daily_life": ["today", "yesterday", "morning", "evening", "weekend"],
-      "hobbies": ["music", "movie", "book", "game", "sport", "hobby"]
+      work: [
+        "work",
+        "job",
+        "boss",
+        "colleague",
+        "office",
+        "project",
+        "meeting",
+      ],
+      relationships: [
+        "girlfriend",
+        "boyfriend",
+        "dating",
+        "love",
+        "relationship",
+        "partner",
+      ],
+      family: ["family", "mom", "dad", "mother", "father", "sister", "brother"],
+      health: ["health", "sick", "doctor", "hospital", "pain", "medical"],
+      emotions: ["happy", "sad", "angry", "stressed", "anxious", "excited"],
+      future: ["future", "plan", "goal", "dream", "hope", "want"],
+      past: ["remember", "used to", "before", "memory", "past"],
+      sexual: [
+        "sex",
+        "horny",
+        "hot",
+        "kiss",
+        "touch",
+        "want you",
+        "bed",
+        "fuck",
+      ],
+      daily_life: ["today", "yesterday", "morning", "evening", "weekend"],
+      hobbies: ["music", "movie", "book", "game", "sport", "hobby"],
     };
 
     for (const [theme, keywords] of Object.entries(themeKeywords)) {
-      if (keywords.some(keyword => textLower.includes(keyword))) {
+      if (keywords.some((keyword) => textLower.includes(keyword))) {
         themes.push(theme);
       }
     }
@@ -263,22 +313,31 @@ export class AgenticMemoryManager {
     const textLower = text.toLowerCase();
 
     const emotionPatterns: Record<string, string[]> = {
-      "happy": ["happy", "joy", "excited", "amazing", "wonderful", "great", "awesome", "love"],
-      "sad": ["sad", "cry", "tears", "depressed", "down", "upset", "hurt"],
-      "angry": ["angry", "mad", "pissed", "furious", "annoyed", "frustrated"],
-      "anxious": ["anxious", "worried", "nervous", "scared", "afraid", "panic"],
-      "stressed": ["stressed", "overwhelmed", "pressure", "exhausted", "tired"],
-      "lonely": ["lonely", "alone", "miss", "isolated", "empty"],
-      "excited": ["excited", "can't wait", "thrilled", "pumped", "eager"]
+      happy: [
+        "happy",
+        "joy",
+        "excited",
+        "amazing",
+        "wonderful",
+        "great",
+        "awesome",
+        "love",
+      ],
+      sad: ["sad", "cry", "tears", "depressed", "down", "upset", "hurt"],
+      angry: ["angry", "mad", "pissed", "furious", "annoyed", "frustrated"],
+      anxious: ["anxious", "worried", "nervous", "scared", "afraid", "panic"],
+      stressed: ["stressed", "overwhelmed", "pressure", "exhausted", "tired"],
+      lonely: ["lonely", "alone", "miss", "isolated", "empty"],
+      excited: ["excited", "can't wait", "thrilled", "pumped", "eager"],
     };
 
     for (const [emotion, patterns] of Object.entries(emotionPatterns)) {
-      const matches = patterns.filter(pattern => textLower.includes(pattern));
+      const matches = patterns.filter((pattern) => textLower.includes(pattern));
       if (matches.length > 0) {
         return {
           primary: emotion as any,
-          intensity: Math.min(1.0, 0.3 + (matches.length * 0.2)),
-          triggers: matches
+          intensity: Math.min(1.0, 0.3 + matches.length * 0.2),
+          triggers: matches,
         };
       }
     }
@@ -303,44 +362,120 @@ export class AgenticMemoryManager {
   }
 
   private isPositiveResponse(text: string): boolean {
-    const positiveIndicators = ["yes", "yeah", "sure", "okay", "great", "awesome", "love", "like", "good", "nice", "wonderful", "amazing"];
-    return positiveIndicators.some(indicator => text.toLowerCase().includes(indicator));
+    const positiveIndicators = [
+      "yes",
+      "yeah",
+      "sure",
+      "okay",
+      "great",
+      "awesome",
+      "love",
+      "like",
+      "good",
+      "nice",
+      "wonderful",
+      "amazing",
+    ];
+    return positiveIndicators.some((indicator) =>
+      text.toLowerCase().includes(indicator),
+    );
   }
 
   private containsPersonalSharing(text: string): boolean {
-    const personalIndicators = ["i feel", "i think", "my life", "i am", "i'm", "when i", "i was", "i remember"];
-    return personalIndicators.some(indicator => text.toLowerCase().includes(indicator));
+    const personalIndicators = [
+      "i feel",
+      "i think",
+      "my life",
+      "i am",
+      "i'm",
+      "when i",
+      "i was",
+      "i remember",
+    ];
+    return personalIndicators.some((indicator) =>
+      text.toLowerCase().includes(indicator),
+    );
   }
 
   private containsSexualContent(text: string): boolean {
-    const sexualIndicators = ["sex", "horny", "fuck", "kiss", "touch", "naked", "bed", "hot", "wet", "hard", "cum"];
-    return sexualIndicators.some(indicator => text.toLowerCase().includes(indicator));
+    const sexualIndicators = [
+      "sex",
+      "horny",
+      "fuck",
+      "kiss",
+      "touch",
+      "naked",
+      "bed",
+      "hot",
+      "wet",
+      "hard",
+      "cum",
+    ];
+    return sexualIndicators.some((indicator) =>
+      text.toLowerCase().includes(indicator),
+    );
   }
 
   private containsAffection(text: string): boolean {
-    const affectionIndicators = ["love you", "miss you", "care about you", "adore", "sweetheart", "baby", "babe", "darling"];
-    return affectionIndicators.some(indicator => text.toLowerCase().includes(indicator));
+    const affectionIndicators = [
+      "love you",
+      "miss you",
+      "care about you",
+      "adore",
+      "sweetheart",
+      "baby",
+      "babe",
+      "darling",
+    ];
+    return affectionIndicators.some((indicator) =>
+      text.toLowerCase().includes(indicator),
+    );
   }
 
   private seemsDistant(text: string): boolean {
-    const distantIndicators = ["k", "ok", "whatever", "sure", "i guess", "maybe", "idk", "don't know"];
-    return text.length < 10 || distantIndicators.some(indicator => text.toLowerCase() === indicator);
+    const distantIndicators = [
+      "k",
+      "ok",
+      "whatever",
+      "sure",
+      "i guess",
+      "maybe",
+      "idk",
+      "don't know",
+    ];
+    return (
+      text.length < 10 ||
+      distantIndicators.some((indicator) => text.toLowerCase() === indicator)
+    );
   }
 
   private extractMainTopic(text: string): string {
     // Simple topic extraction
     const sentences = text.split(/[.!?]/);
     if (sentences.length > 0) {
-      const mainSentence = sentences[0].trim();
-      const words = mainSentence.split(' ');
+      const mainSentence = sentences[0]?.trim();
+      if (!mainSentence) return "general conversation";
+      const words = mainSentence.split(" ");
 
       // Find noun-like words (simplified)
-      const topics = words.filter(word =>
-        word.length > 3 &&
-        !["what", "when", "where", "why", "how", "that", "this", "have", "been", "will"].includes(word.toLowerCase())
+      const topics = words.filter(
+        (word) =>
+          word.length > 3 &&
+          ![
+            "what",
+            "when",
+            "where",
+            "why",
+            "how",
+            "that",
+            "this",
+            "have",
+            "been",
+            "will",
+          ].includes(word.toLowerCase()),
       );
 
-      return topics.slice(0, 3).join(' ') || "general conversation";
+      return topics.slice(0, 3).join(" ") || "general conversation";
     }
     return "general conversation";
   }
@@ -368,12 +503,19 @@ export class AgenticMemoryManager {
       unfinishedTopics: this.unresolved_topics.slice(-3),
       insideJokes: this.insideJokes.slice(-5),
       userPreferences: this.userPreferences,
-      emotionalMoments: this.emotional_moments.slice(-10),
-      lastInteractionTime: this.conversations.length > 0
-        ? this.conversations[this.conversations.length - 1].timestamp
-        : undefined,
+      emotionalMoments: this.emotional_moments.slice(-10).map((moment) => ({
+        timestamp: moment.timestamp,
+        description: moment.description,
+        emotion: moment.emotion as any,
+        intensity: moment.intensity,
+        resolved: moment.resolved,
+      })),
+      lastInteractionTime:
+        this.conversations.length > 0
+          ? this.conversations[this.conversations.length - 1]?.timestamp
+          : undefined,
       timePeriod: timePeriod as any,
-      energyLevel: this.temporalEngine.getEnergyLevel(timePeriod) as any
+      energyLevel: this.temporalEngine.getEnergyLevel(timePeriod) as any,
     };
   }
 
@@ -382,7 +524,7 @@ export class AgenticMemoryManager {
       timestamp: new Date().toISOString(),
       speaker,
       message,
-      metadata
+      metadata,
     });
 
     // Keep only last 200 conversations

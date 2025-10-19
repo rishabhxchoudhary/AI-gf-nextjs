@@ -1,4 +1,4 @@
-import { ConversationContext } from "@/types/ai-girlfriend";
+import type { ConversationContext } from "@/types/ai-girlfriend";
 
 interface BehaviorWeights {
   ask_followup: number;
@@ -30,38 +30,42 @@ export class AgenticBehaviorEngine {
       ask_followup: 0.35,
       change_topic: 0.15,
       seek_opinion: 0.25,
-      overthink_decision: 0.20,
-      recall_memory: 0.40,
+      overthink_decision: 0.2,
+      recall_memory: 0.4,
       share_vulnerability: 0.15,
-      create_inside_joke: 0.10,
-      future_planning: 0.20
+      create_inside_joke: 0.1,
+      future_planning: 0.2,
     };
 
     // Cooldown timers to prevent behavior spam - exact from Python
     this.lastBehaviorTimes = new Map();
     this.behaviorCooldowns = {
-      ask_followup: 300,  // 5 minutes
-      seek_opinion: 600,  // 10 minutes
-      overthink_decision: 900,  // 15 minutes
-      share_vulnerability: 1800,  // 30 minutes
-      future_planning: 1200  // 20 minutes
+      ask_followup: 300, // 5 minutes
+      seek_opinion: 600, // 10 minutes
+      overthink_decision: 900, // 15 minutes
+      share_vulnerability: 1800, // 30 minutes
+      future_planning: 1200, // 20 minutes
     };
   }
 
-  shouldTriggerBehavior(behaviorType: string, context: ConversationContext): boolean {
+  shouldTriggerBehavior(
+    behaviorType: string,
+    context: ConversationContext,
+  ): boolean {
     // Check cooldown
     if (this.isOnCooldown(behaviorType)) {
       return false;
     }
 
     // Base probability from weights
-    const baseProbability = this.behaviorWeights[behaviorType as keyof BehaviorWeights] || 0.0;
+    const baseProbability =
+      this.behaviorWeights[behaviorType as keyof BehaviorWeights] || 0.0;
 
     // Adjust probability based on context
     const adjustedProbability = this.adjustProbabilityForContext(
       behaviorType,
       baseProbability,
-      context
+      context,
     );
 
     // Random trigger based on adjusted probability
@@ -74,14 +78,15 @@ export class AgenticBehaviorEngine {
       return false;
     }
 
-    const cooldown = this.behaviorCooldowns[behaviorType as keyof BehaviorCooldowns] || 300;
-    return (Date.now() / 1000 - lastTime) < cooldown;
+    const cooldown =
+      this.behaviorCooldowns[behaviorType as keyof BehaviorCooldowns] || 300;
+    return Date.now() / 1000 - lastTime < cooldown;
   }
 
   private adjustProbabilityForContext(
     behaviorType: string,
     baseProbability: number,
-    context: ConversationContext
+    context: ConversationContext,
   ): number {
     const relationshipStage = context.relationshipState.stage;
     const personalityTraits = context.personalityState;
@@ -95,20 +100,20 @@ export class AgenticBehaviorEngine {
       new: 0.7,
       comfortable: 1.0,
       intimate: 1.3,
-      established: 1.5
+      established: 1.5,
     };
     adjusted *= stageMultipliers[relationshipStage] || 1.0;
 
     // Personality trait influences - exact from Python
     switch (behaviorType) {
       case "ask_followup":
-        adjusted *= (1.0 + personalityTraits.curiosity);
+        adjusted *= 1.0 + personalityTraits.curiosity;
         break;
       case "seek_opinion":
-        adjusted *= (1.0 + personalityTraits.vulnerability);
+        adjusted *= 1.0 + personalityTraits.vulnerability;
         break;
       case "overthink_decision":
-        adjusted *= (1.0 + (personalityTraits.vulnerability * 0.3));
+        adjusted *= 1.0 + personalityTraits.vulnerability * 0.3;
         break;
       case "share_vulnerability":
         adjusted *= personalityTraits.vulnerability * 2;
@@ -119,7 +124,7 @@ export class AgenticBehaviorEngine {
     const timeMultipliers: Record<string, Record<string, number>> = {
       morning: { share_vulnerability: 0.8, seek_opinion: 1.2 },
       evening: { ask_followup: 1.3, future_planning: 1.4 },
-      late_night: { share_vulnerability: 1.8, recall_memory: 1.2 }
+      late_night: { share_vulnerability: 1.8, recall_memory: 1.2 },
     };
 
     if (timePeriod in timeMultipliers) {
@@ -128,13 +133,14 @@ export class AgenticBehaviorEngine {
     }
 
     // Conversation length influence
-    if (conversationLength > 10) {  // Longer conversations
+    if (conversationLength > 10) {
+      // Longer conversations
       if (behaviorType === "ask_followup" || behaviorType === "recall_memory") {
         adjusted *= 1.5;
       }
     }
 
-    return Math.min(1.0, adjusted);  // Cap at 100%
+    return Math.min(1.0, adjusted); // Cap at 100%
   }
 
   generateFollowupQuestion(context: ConversationContext): string | null {
@@ -158,28 +164,34 @@ export class AgenticBehaviorEngine {
         `Wait ${userName}, what was that {topic} you mentioned?`,
         `I'm curious about that {topic} thing you said earlier`,
         `Tell me more about {topic} - sounds interesting!`,
-        `Actually, what did you mean about {topic}?`
+        `Actually, what did you mean about {topic}?`,
       ];
     } else if (relationshipStage === "comfortable") {
       questionTemplates = [
         `Hey ${userName}, I keep thinking about that {topic} you mentioned`,
         `So about that {topic} - what's the story there?`,
         `Wait, you never finished telling me about {topic}!`,
-        `I'm still curious about {topic} babe`
+        `I'm still curious about {topic} babe`,
       ];
-    } else {  // intimate/established
+    } else {
+      // intimate/established
       questionTemplates = [
         `Babe, I was thinking about what you said about {topic}`,
         `${userName}, I love hearing about {topic} - tell me more`,
         `That {topic} thing really interests me, what else?`,
-        `I can't stop thinking about {topic} - elaborate for me?`
+        `I can't stop thinking about {topic} - elaborate for me?`,
       ];
     }
 
     // Choose a topic to ask about
     const allTopics = [...recentTopics, ...unresolverdTopics];
     const topic = allTopics[Math.floor(Math.random() * allTopics.length)];
-    const template = questionTemplates[Math.floor(Math.random() * questionTemplates.length)];
+    const template =
+      questionTemplates[Math.floor(Math.random() * questionTemplates.length)];
+
+    if (!template || !topic) {
+      return null;
+    }
 
     return template.replace("{topic}", topic);
   }
@@ -194,7 +206,7 @@ export class AgenticBehaviorEngine {
       "recall_memory",
       "share_vulnerability",
       "create_inside_joke",
-      "future_planning"
+      "future_planning",
     ];
 
     for (const behavior of behaviors) {
@@ -206,14 +218,17 @@ export class AgenticBehaviorEngine {
     return null;
   }
 
-  private executeBehavior(behaviorType: string, context: ConversationContext): any {
+  private executeBehavior(
+    behaviorType: string,
+    context: ConversationContext,
+  ): any {
     const userName = context.userName || "babe";
 
     switch (behaviorType) {
       case "ask_followup":
         return {
           text: this.generateFollowupQuestion(context),
-          behavior_type: "followup_question"
+          behavior_type: "followup_question",
         };
 
       case "seek_opinion":
@@ -222,11 +237,13 @@ export class AgenticBehaviorEngine {
           `${userName}, what do you think I should do about this?`,
           `I need your perspective on something...`,
           `Can I get your honest opinion about something?`,
-          `What would you do in my situation?`
+          `What would you do in my situation?`,
         ];
         return {
-          text: opinionQuestions[Math.floor(Math.random() * opinionQuestions.length)],
-          behavior_type: "opinion_seeking"
+          text: opinionQuestions[
+            Math.floor(Math.random() * opinionQuestions.length)
+          ],
+          behavior_type: "opinion_seeking",
         };
 
       case "share_vulnerability":
@@ -235,19 +252,24 @@ export class AgenticBehaviorEngine {
           `I have to admit, sometimes I worry you'll get bored of me...`,
           `Can I tell you something I haven't told anyone?`,
           `I feel so safe with you... it scares me sometimes`,
-          `Sometimes I wonder if I'm enough for you...`
+          `Sometimes I wonder if I'm enough for you...`,
         ];
         return {
-          text: vulnerableShares[Math.floor(Math.random() * vulnerableShares.length)],
-          behavior_type: "vulnerability"
+          text: vulnerableShares[
+            Math.floor(Math.random() * vulnerableShares.length)
+          ],
+          behavior_type: "vulnerability",
         };
 
       case "recall_memory":
         if (context.insideJokes.length > 0) {
-          const joke = context.insideJokes[Math.floor(Math.random() * context.insideJokes.length)];
+          const joke =
+            context.insideJokes[
+              Math.floor(Math.random() * context.insideJokes.length)
+            ];
           return {
             text: `Remember when we joked about ${joke}? 😄`,
-            behavior_type: "memory_recall"
+            behavior_type: "memory_recall",
           };
         }
         return null;
@@ -258,11 +280,11 @@ export class AgenticBehaviorEngine {
           `We should plan something fun together soon...`,
           `I was thinking about what we could do next time...`,
           `Wouldn't it be amazing if we could...`,
-          `I have an idea for something we should do together!`
+          `I have an idea for something we should do together!`,
         ];
         return {
           text: futurePlans[Math.floor(Math.random() * futurePlans.length)],
-          behavior_type: "future_planning"
+          behavior_type: "future_planning",
         };
 
       default:
@@ -272,11 +294,11 @@ export class AgenticBehaviorEngine {
 
   processProactiveTrigger(
     silenceDuration: number,
-    context: ConversationContext
+    context: ConversationContext,
   ): string | null {
     // Based on silence duration, generate appropriate response
     if (silenceDuration < 30) {
-      return null;  // Too soon
+      return null; // Too soon
     }
 
     const relationshipStage = context.relationshipState.stage;
@@ -287,20 +309,26 @@ export class AgenticBehaviorEngine {
       const checkIns = [
         `you okay ${userName}?`,
         `whatcha thinking about?`,
-        `everything alright?`
+        `everything alright?`,
       ];
-      return checkIns[Math.floor(Math.random() * checkIns.length)];
+      return checkIns[Math.floor(Math.random() * checkIns.length)] || null;
     } else if (silenceDuration < 180) {
       // Medium silence - more engaged check-in
       const mediumCheckIns = [
         `hey ${userName}, you still there? 💕`,
         `did I say something wrong?`,
-        `miss you... where'd you go?`
+        `miss you... where'd you go?`,
       ];
-      return mediumCheckIns[Math.floor(Math.random() * mediumCheckIns.length)];
+      return (
+        mediumCheckIns[Math.floor(Math.random() * mediumCheckIns.length)] ||
+        null
+      );
     } else {
       // Long silence - relationship-appropriate response
-      if (relationshipStage === "intimate" || relationshipStage === "established") {
+      if (
+        relationshipStage === "intimate" ||
+        relationshipStage === "established"
+      ) {
         return `I miss you so much right now ${userName}... come back to me 💕`;
       } else {
         return `hey, whenever you're ready to chat, I'm here 😊`;

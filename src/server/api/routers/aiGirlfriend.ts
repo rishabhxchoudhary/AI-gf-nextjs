@@ -99,12 +99,26 @@ export const aiGirlfriendRouter = createTRPCRouter({
       const userId = ctx.session.user.id;
       const { message, sessionId } = input;
 
-      // Check credits first
-      const credits = await getUserCredits(userId);
-      if (credits.credits < CREDITS_PER_MESSAGE) {
+      // Check credits first and ensure user has credits initialized
+      let credits = await getUserCredits(userId);
+      
+      // If user has no credits record, initialize them first
+      if (!credits) {
+        // Initialize user with credits if they don't exist
+        let user = await getUserWithCredits(userId);
+        if (!user) {
+          const email = ctx.session.user.email || "";
+          const name = ctx.session.user.name || "User";
+          await createUser(userId, email, name);
+          user = await getUserWithCredits(userId);
+        }
+        credits = await getUserCredits(userId);
+      }
+      
+      if (!credits || credits.credits < CREDITS_PER_MESSAGE) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "Insufficient credits",
+          message: "Insufficient credits. You need at least 1 credit to send a message.",
         });
       }
 
@@ -122,6 +136,29 @@ export const aiGirlfriendRouter = createTRPCRouter({
       if (!conversation) {
         await createConversation(userId, sessionId);
         conversation = await getConversation(userId, sessionId);
+      }
+
+      // Save user message to database first
+      const userMessage: Message = {
+        id: nanoid(),
+        role: "user",
+        content: message,
+        timestamp: new Date().toISOString(),
+      };
+
+      await saveMessage(userId, sessionId, "user", message, {
+        timestamp: userMessage.timestamp,
+      });
+
+      // Deduct credits with proper error handling
+      try {
+        await updateUserCredits(userId, CREDITS_PER_MESSAGE);
+      } catch (error) {
+        console.error("Failed to deduct credits:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to process payment. Please try again.",
+        });
       }
 
       // Create agentic handler with optimized settings
@@ -152,21 +189,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }));
 
       // Add current user message to history
-      const userMessage: Message = {
-        id: nanoid(),
-        role: "user",
-        content: message,
-        timestamp: new Date().toISOString(),
-      };
       conversationHistory.push(userMessage);
-
-      // Save user message to database
-      await saveMessage(userId, sessionId, "user", message, {
-        timestamp: userMessage.timestamp,
-      });
-
-      // Deduct credits BEFORE processing AI response (prevents negative credits)
-      await updateUserCredits(userId, CREDITS_PER_MESSAGE);
 
       console.log(`🤖 Generating agentic AI response for user: ${userId}`);
 
@@ -202,7 +225,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         response: aiResponse.bursts,
-        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        creditsRemaining: (credits?.credits || 0) - CREDITS_PER_MESSAGE,
         emotionalContext: aiResponse.emotionalContext,
         relationshipUpdate: aiResponse.relationshipUpdate,
       };
@@ -250,13 +273,22 @@ export const aiGirlfriendRouter = createTRPCRouter({
   // Get user profile and credits
   getUserProfile: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.session.user.id;
-    const user = await getUserWithCredits(userId);
+    let user = await getUserWithCredits(userId);
 
+    // If user doesn't exist, create them first
     if (!user) {
-      throw new TRPCError({
-        code: "NOT_FOUND",
-        message: "User not found",
-      });
+      const email = ctx.session.user.email || "";
+      const name = ctx.session.user.name || "User";
+      await createUser(userId, email, name);
+      user = await getUserWithCredits(userId);
+      
+      // If still no user after creation, something is wrong
+      if (!user) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Failed to create user profile",
+        });
+      }
     }
 
     const personalityState = await getPersonalityState(userId);
@@ -266,12 +298,12 @@ export const aiGirlfriendRouter = createTRPCRouter({
         id: userId,
         email: user.email,
         name: user.name,
-        credits: user.credits,
-        totalCreditsUsed: user.totalCreditsUsed,
-        subscriptionStatus: user.subscriptionStatus,
+        credits: user.credits || 0,
+        totalCreditsUsed: user.totalCreditsUsed || 0,
+        subscriptionStatus: user.subscriptionStatus || "free",
         createdAt: user.createdAt,
-        messageCount: user.messageCount,
-        sessionCount: user.sessionCount,
+        messageCount: user.messageCount || 0,
+        sessionCount: user.sessionCount || 0,
       },
       relationshipStage: personalityState?.relationshipStage || "comfortable",
       interactionCount: personalityState?.interactionCount || 0,
@@ -293,7 +325,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       // Check credits first
       const credits = await getUserCredits(userId);
-      if (credits.credits < CREDITS_PER_MESSAGE) {
+      if (!credits || credits.credits < CREDITS_PER_MESSAGE) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Insufficient credits",
@@ -393,7 +425,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         response: aiResponse.bursts,
-        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        creditsRemaining: (credits?.credits || 0) - CREDITS_PER_MESSAGE,
         emotionalContext: aiResponse.emotionalContext,
         relationshipUpdate: aiResponse.relationshipUpdate,
       };
@@ -405,8 +437,23 @@ export const aiGirlfriendRouter = createTRPCRouter({
     const credits = await getUserCredits(userId);
     const user = await getUser(userId);
 
+    // If user doesn't have credits initialized, create them
+    if (!credits) {
+      if (!user) {
+        const email = ctx.session.user.email || "";
+        const name = ctx.session.user.name || "User";
+        await createUser(userId, email, name);
+      }
+      // Get credits after creation
+      const newCredits = await getUserCredits(userId);
+      return {
+        credits: newCredits?.credits || 0,
+        subscriptionStatus: user?.subscriptionStatus || "free",
+      };
+    }
+
     return {
-      credits: credits?.credits || 0,
+      credits: credits.credits || 0,
       subscriptionStatus: user?.subscriptionStatus || "free",
     };
   }),
@@ -481,7 +528,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       // Check credits first
       const credits = await getUserCredits(userId);
-      if (credits.credits < CREDITS_PER_MESSAGE) {
+      if (!credits || credits.credits < CREDITS_PER_MESSAGE) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Insufficient credits",
@@ -538,6 +585,33 @@ export const aiGirlfriendRouter = createTRPCRouter({
         }
       );
 
+      console.log("🧊 Ice breakers generated:", iceBreakers);
+
+      // Even if no ice breakers were generated, provide fallbacks
+      if (!iceBreakers || iceBreakers.length === 0) {
+        console.log("🧊 No ice breakers generated, creating fallbacks");
+        const fallbacks = [
+          { id: `fallback_${Date.now()}_1`, text: "What's been on your mind lately?", type: "question", mood: "curious" },
+          { id: `fallback_${Date.now()}_2`, text: "Tell me about something that made you smile today", type: "supportive", mood: "caring" },
+          { id: `fallback_${Date.now()}_3`, text: "I love hearing your thoughts about things", type: "compliment", mood: "warm" }
+        ];
+        
+        // Track analytics
+        await trackAnalytics(userId, "ice_breakers_generated", {
+          sessionId,
+          count: fallbacks.length,
+          types: fallbacks.map(ib => ib.type),
+          creditsUsed: CREDITS_PER_MESSAGE,
+          fallback: true,
+        });
+
+        return {
+          iceBreakers: fallbacks,
+          creditsRemaining: (credits?.credits || 0) - CREDITS_PER_MESSAGE,
+          generatedAt: new Date().toISOString(),
+        };
+      }
+
       // Track analytics
       await trackAnalytics(userId, "ice_breakers_generated", {
         sessionId,
@@ -550,7 +624,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         iceBreakers,
-        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        creditsRemaining: (credits?.credits || 0) - CREDITS_PER_MESSAGE,
         generatedAt: new Date().toISOString(),
       };
     }),
@@ -570,7 +644,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       // Check credits first
       const credits = await getUserCredits(userId);
-      if (credits.credits < CREDITS_PER_MESSAGE) {
+      if (!credits || credits.credits < CREDITS_PER_MESSAGE) {
         throw new TRPCError({
           code: "FORBIDDEN",
           message: "Insufficient credits",
@@ -664,7 +738,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
       return {
         response: aiResponse.bursts,
-        creditsRemaining: credits.credits - CREDITS_PER_MESSAGE,
+        creditsRemaining: (credits?.credits || 0) - CREDITS_PER_MESSAGE,
         emotionalContext: aiResponse.emotionalContext,
         relationshipUpdate: aiResponse.relationshipUpdate,
         iceBreakerId,

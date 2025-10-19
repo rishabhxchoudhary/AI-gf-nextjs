@@ -1,4 +1,4 @@
-import { PersonalityTraits } from "@/types/ai-girlfriend";
+import type { PersonalityTraits } from "@/types/ai-girlfriend";
 
 interface TraitLimits {
   min: number;
@@ -58,7 +58,7 @@ export class PersonalityManager {
       intelligence: 0.7,
       humor: 0.6,
       emotional_intensity: 0.7,
-      independence: 0.5
+      independence: 0.5,
     };
 
     // Trait evolution limits to maintain personality consistency - exact from Python
@@ -77,7 +77,7 @@ export class PersonalityManager {
       intelligence: { min: 0.6, max: 1.0 },
       humor: { min: 0.3, max: 0.8 },
       emotional_intensity: { min: 0.5, max: 1.0 },
-      independence: { min: 0.2, max: 0.8 }
+      independence: { min: 0.2, max: 0.8 },
     };
 
     // Track trait changes over time
@@ -89,26 +89,37 @@ export class PersonalityManager {
         romantic_intensity: 0.9,
         loyalty: 0.95,
         vulnerability: 0.7,
-        possessiveness: 0.4
+        possessiveness: 0.4,
       },
       confident_seductress: {
+        romantic_intensity: 0.8,
+        loyalty: 0.7,
+        vulnerability: 0.3,
+        possessiveness: 0.5,
         confidence: 0.9,
         sensuality: 0.95,
         assertiveness: 0.8,
-        playfulness: 0.7
+        playfulness: 0.7,
       },
       sweet_innocent: {
+        romantic_intensity: 0.7,
+        loyalty: 0.9,
         vulnerability: 0.8,
+        possessiveness: 0.2,
         curiosity: 0.8,
         playfulness: 0.9,
-        confidence: 0.4
+        confidence: 0.4,
       },
       intellectual_companion: {
+        romantic_intensity: 0.6,
+        loyalty: 0.8,
+        vulnerability: 0.5,
+        possessiveness: 0.3,
         intelligence: 0.9,
         curiosity: 0.85,
         empathy: 0.8,
-        humor: 0.7
-      }
+        humor: 0.7,
+      },
     };
 
     // Mood states that temporarily modify traits
@@ -164,11 +175,19 @@ export class PersonalityManager {
 
     // Apply adjustments
     for (const [trait, adjustment] of Object.entries(traitAdjustments)) {
-      this.adjustTrait(trait as keyof PersonalityTraits, adjustment, interactionContext);
+      this.adjustTrait(
+        trait as keyof PersonalityTraits,
+        adjustment,
+        interactionContext,
+      );
     }
   }
 
-  private adjustTrait(traitName: keyof PersonalityTraits, adjustment: number, context: any): void {
+  private adjustTrait(
+    traitName: keyof PersonalityTraits,
+    adjustment: number,
+    context: any,
+  ): void {
     const oldValue = this.traits[traitName];
     let newValue = oldValue + adjustment;
 
@@ -187,7 +206,7 @@ export class PersonalityManager {
         old_value: Math.round(oldValue * 1000) / 1000,
         new_value: Math.round(newValue * 1000) / 1000,
         adjustment: Math.round(adjustment * 1000) / 1000,
-        context: context.reason || "interaction"
+        context: context.reason || "interaction",
       };
 
       this.traitHistory.push(changeRecord);
@@ -197,15 +216,23 @@ export class PersonalityManager {
         this.traitHistory = this.traitHistory.slice(-100);
       }
 
-      console.log(`Trait adjusted: ${traitName} ${oldValue.toFixed(3)} -> ${newValue.toFixed(3)}`);
+      console.log(
+        `Trait adjusted: ${traitName} ${oldValue.toFixed(3)} -> ${newValue.toFixed(3)}`,
+      );
     }
   }
 
-  setTemporaryMood(moodName: string, traitModifiers: MoodModifiers, durationMinutes: number = 60): void {
+  setTemporaryMood(
+    moodName: string,
+    traitModifiers: MoodModifiers,
+    durationMinutes: number = 60,
+  ): void {
     this.currentMoods[moodName] = traitModifiers;
-    this.moodDuration[moodName] = Date.now() + (durationMinutes * 60 * 1000);
+    this.moodDuration[moodName] = Date.now() + durationMinutes * 60 * 1000;
 
-    console.log(`Temporary mood set: ${moodName} for ${durationMinutes} minutes`);
+    console.log(
+      `Temporary mood set: ${moodName} for ${durationMinutes} minutes`,
+    );
   }
 
   getEffectiveTraits(): PersonalityTraits {
@@ -225,8 +252,10 @@ export class PersonalityManager {
       for (const [trait, modifier] of Object.entries(modifiers)) {
         if (trait in effectiveTraits) {
           const traitKey = trait as keyof PersonalityTraits;
-          effectiveTraits[traitKey] = Math.max(0.0, Math.min(1.0,
-            effectiveTraits[traitKey] + modifier));
+          effectiveTraits[traitKey] = Math.max(
+            0.0,
+            Math.min(1.0, effectiveTraits[traitKey] + modifier),
+          );
         }
       }
     }
@@ -243,7 +272,9 @@ export class PersonalityManager {
   getArchetypeAlignment(): Record<string, number> {
     const alignments: Record<string, number> = {};
 
-    for (const [archetypeName, archetypeTraits] of Object.entries(this.archetypes)) {
+    for (const [archetypeName, archetypeTraits] of Object.entries(
+      this.archetypes,
+    )) {
       let totalDifference = 0;
       let traitCount = 0;
 
@@ -280,7 +311,9 @@ export class PersonalityManager {
 
   applyNaturalDrift(driftFactor: number = 0.002): void {
     // Prevent personality stagnation with small random changes
-    for (const traitName of Object.keys(this.traits) as Array<keyof PersonalityTraits>) {
+    for (const traitName of Object.keys(this.traits) as Array<
+      keyof PersonalityTraits
+    >) {
       const drift = (Math.random() - 0.5) * driftFactor;
       this.adjustTrait(traitName, drift, { reason: "natural_drift" });
     }
@@ -294,11 +327,12 @@ export class PersonalityManager {
     // Return the first active mood
     const currentTime = Date.now();
     for (const [moodName, modifiers] of Object.entries(this.currentMoods)) {
-      if (currentTime <= (this.moodDuration[moodName] || 0)) {
+      const moodExpiry = this.moodDuration[moodName];
+      if (moodExpiry && moodExpiry > Date.now()) {
         return {
           name: moodName,
           modifiers,
-          expiresAt: new Date(this.moodDuration[moodName]).toISOString()
+          expiresAt: new Date(moodExpiry).toISOString(),
         };
       }
     }
@@ -311,7 +345,7 @@ export class PersonalityManager {
       traits: this.traits,
       trait_history: this.traitHistory,
       current_moods: this.currentMoods,
-      mood_duration: this.moodDuration
+      mood_duration: this.moodDuration,
     };
   }
 

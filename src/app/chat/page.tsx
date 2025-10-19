@@ -13,11 +13,25 @@ import {
   Button,
   Chip,
   Avatar,
-  Spinner,
   Divider,
-  Progress,
+  ScrollShadow,
+  Textarea,
 } from "@nextui-org/react";
+import {
+  Send,
+  Plus,
+  Sparkles,
+  Heart,
+  MessageCircle,
+  ArrowLeft,
+  Settings,
+  MoreHorizontal,
+  History,
+  RotateCcw
+} from "lucide-react";
 import type { MessageBurst, IceBreaker } from "@/types/ai-girlfriend";
+import { ChatMessage, TypingIndicator, IceBreakerCard } from "@/components/ui/chat-components";
+import { ChatPageSkeleton } from "@/components/ui/loading-skeletons";
 
 export default function ChatPage() {
   const { data: session, status } = useSession();
@@ -30,6 +44,9 @@ export default function ChatPage() {
   const [iceBreakers, setIceBreakers] = useState<IceBreaker[]>([]);
   const [showIceBreakers, setShowIceBreakers] = useState(false);
   const [isGeneratingIceBreakers, setIsGeneratingIceBreakers] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // tRPC mutations and queries
@@ -53,11 +70,12 @@ export default function ChatPage() {
   );
   const { data: conversationHistory, refetch: refetchHistory } = api.aiGirlfriend.getConversationHistory.useQuery(
     { sessionId, limit: 50 },
-    { enabled: !!sessionId }
+    { enabled: false } // Disable automatic loading
   );
 
   // Redirect if not authenticated
   useEffect(() => {
+    setMounted(true);
     if (status === "unauthenticated") {
       router.push("/");
     }
@@ -81,15 +99,27 @@ export default function ChatPage() {
       if (sessionsData.length > 0) {
         // Use the most recent session
         const mostRecentSession = sessionsData[0];
-        setSessionId(mostRecentSession.sessionId);
-        
-        // Load conversation history will be handled by the useEffect below
+        if (mostRecentSession) {
+          setSessionId(mostRecentSession.sessionId);
+        }
       } else {
         // Start new session if no existing sessions
         const sessionData = await startSession.mutateAsync();
         setSessionId(sessionData.sessionId);
-        
-        // Add welcome message for new sessions only
+      }
+    } catch (error) {
+      console.error("Failed to initialize chat:", error);
+    }
+  };
+
+  // Start fresh conversation when sessionId changes
+  useEffect(() => {
+    if (sessionId) {
+      // Reset history state for new sessions
+      setHistoryLoaded(false);
+      
+      if (messages.length === 0) {
+        // Always start with a fresh welcome message
         setMessages([
           {
             role: "assistant",
@@ -98,32 +128,8 @@ export default function ChatPage() {
           },
         ]);
       }
-    } catch (error) {
-      console.error("Failed to initialize chat:", error);
     }
-  };
-
-  // Load conversation history when sessionId changes
-  useEffect(() => {
-    if (sessionId && conversationHistory?.messages) {
-      const historyMessages = conversationHistory.messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-        timestamp: msg.timestamp,
-      }));
-      
-      if (historyMessages.length > 0) {
-        // Only set messages if they're different to avoid overwriting new messages
-        setMessages(prev => {
-          // If we already have messages and they include the history, don't replace
-          if (prev.length > 0 && prev.some(m => historyMessages.some(h => h.timestamp === m.timestamp))) {
-            return prev;
-          }
-          return historyMessages;
-        });
-      }
-    }
-  }, [sessionId, conversationHistory]);
+  }, [sessionId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -189,12 +195,20 @@ export default function ChatPage() {
         count: 3,
       });
 
-      setIceBreakers(response.iceBreakers);
+      // Cast and add missing fields to match IceBreaker type
+      const iceBreakerWithPriority: IceBreaker[] = response.iceBreakers.map(ib => ({
+        id: ib.id,
+        text: ib.text,
+        type: ib.type as IceBreaker["type"],
+        mood: ib.mood,
+        priority: 1 // Default priority
+      }));
+      setIceBreakers(iceBreakerWithPriority);
       setShowIceBreakers(true);
       
       // Refresh credits after ice breaker generation
       refetchCredits();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error("Failed to generate ice breakers:", error);
       
       // Show error message to user
@@ -231,17 +245,26 @@ export default function ChatPage() {
       // Handle the AI response the same way as regular messages
       if (response.response && Array.isArray(response.response)) {
         await simulateTyping(response.response);
+      } else if (response.response) {
+        const content = typeof response.response === 'string' 
+          ? response.response 
+          : JSON.stringify(response.response);
+          
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: content,
+          timestamp: new Date().toISOString(),
+        }]);
       }
 
       // Refresh credits
       refetchCredits();
-      refetchProfile();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to send ice breaker message:", error);
       
       setMessages(prev => [...prev, {
         role: "system",
-        content: error.message || "Failed to send message. Please try again.",
+        content: error instanceof Error ? error.message : "Failed to send message. Please try again.",
         timestamp: new Date().toISOString(),
       }]);
     }
@@ -266,67 +289,73 @@ export default function ChatPage() {
         sessionId,
       });
 
-      // Debug log to see what we're getting
-      console.log("AI Response:", response);
-
-      // Handle different response formats - restore original simple logic
-      if (response.response) {
-        if (Array.isArray(response.response)) {
-          // Proper burst format - this was working before
-          await simulateTyping(response.response);
-        } else if (typeof response.response === 'string') {
-          // If it's a string that looks like JSON bursts, try to extract text
-          if (response.response.includes('"text":')) {
-            const textMatches = response.response.match(/"text":\s*"([^"]*?)"/g);
-            if (textMatches) {
-              const extractedText = textMatches
-                .map(match => {
-                  const textMatch = match.match(/"text":\s*"([^"]*?)"/);
-                  return textMatch ? textMatch[1] : '';
-                })
-                .filter(text => text.length > 0)
-                .join(' ');
-              
-              setMessages(prev => [...prev, {
-                role: "assistant",
-                content: extractedText,
-                timestamp: new Date().toISOString(),
-              }]);
-            } else {
-              // Fallback to original string
-              setMessages(prev => [...prev, {
-                role: "assistant",
-                content: response.response as string,
-                timestamp: new Date().toISOString(),
-              }]);
-            }
-          } else {
-            // Regular text response - show immediately
-            setMessages(prev => [...prev, {
-              role: "assistant",
-              content: response.response as string,
-              timestamp: new Date().toISOString(),
-            }]);
-          }
-        } else {
-          // Try original simulateTyping for other formats
-          await simulateTyping(response.response);
-        }
+      // Handle AI response - simplified logic
+      if (response.response && Array.isArray(response.response)) {
+        // Use the typing simulation for burst responses
+        await simulateTyping(response.response);
+      } else if (response.response) {
+        // Fallback for any other format - treat as single message
+        const content = typeof response.response === 'string' 
+          ? response.response 
+          : JSON.stringify(response.response);
+          
+        setMessages(prev => [...prev, {
+          role: "assistant",
+          content: content,
+          timestamp: new Date().toISOString(),
+        }]);
       }
 
-      // Refresh credits only (don't refetch history as it might override current messages)
+      // Refresh credits only
       refetchCredits();
-      refetchProfile();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Failed to send message:", error);
 
       // Show error message
       setMessages(prev => [...prev, {
         role: "system",
-        content: error.message || "Sorry, something went wrong. Please try again.",
+        content: error instanceof Error ? error.message : "Sorry, something went wrong. Please try again.",
         timestamp: new Date().toISOString(),
       }]);
     }
+  };
+
+  const handleLoadHistory = async () => {
+    if (!sessionId || isLoadingHistory || historyLoaded) return;
+
+    setIsLoadingHistory(true);
+    try {
+      const historyData = await refetchHistory();
+      
+      if (historyData.data?.messages && historyData.data.messages.length > 0) {
+        const historyMessages = historyData.data.messages.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+        }));
+        
+        // Replace current messages with history
+        setMessages(historyMessages);
+        setHistoryLoaded(true);
+      }
+    } catch (error) {
+      console.error("Failed to load conversation history:", error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  const handleClearConversation = () => {
+    // Reset to fresh conversation
+    setMessages([
+      {
+        role: "assistant",
+        content: "Hey babe! 💕 I've been thinking about you... How are you feeling today?",
+        timestamp: new Date().toISOString(),
+      },
+    ]);
+    setHistoryLoaded(false);
+    setShowIceBreakers(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -356,241 +385,270 @@ export default function ChatPage() {
     }
   };
 
-  if (status === "loading" || !session) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <Spinner size="lg" label="Loading..." />
-      </div>
-    );
+  // Show loading skeleton during hydration and initial load
+  if (!mounted || status === "loading" || !session) {
+    return <ChatPageSkeleton />;
   }
 
   return (
-    <div className="container mx-auto max-w-4xl p-4 h-screen flex flex-col">
-      <Card className="flex-1 flex flex-col">
-        <CardHeader className="flex justify-between items-center px-6 py-4 bg-gradient-to-r from-pink-500/10 to-purple-500/10">
-          <div className="flex items-center gap-4">
-            <Avatar
-              src="/avatar.webp"
-              size="lg"
-              className="ring-2 ring-pink-500 max-h-50 max-w-50 rounded-full"
-            />
-            <div>
-              <h1 className="text-xl font-bold">Aria</h1>
-              <div className="flex items-center gap-2">
-                <Chip
-                  size="sm"
-                  color={getRelationshipColor(userProfile?.relationshipStage)}
-                  variant="flat"
+    <div className="min-h-screen bg-gradient-to-br from-pink-50/30 via-purple-50/20 to-indigo-50/30">
+      <div className="container mx-auto max-w-5xl p-4">
+        {/* Chat Header */}
+        <Card className="mb-4 bg-white/90 backdrop-blur-sm shadow-lg border-0">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between w-full">
+              {/* Left side - Aria info */}
+              <div className="flex items-center gap-4">
+                <Button
+                  isIconOnly
+                  variant="light"
+                  onClick={() => router.push("/")}
+                  className="sm:hidden"
                 >
-                  {getRelationshipEmoji(userProfile?.relationshipStage)} {userProfile?.relationshipStage || "new"}
-                </Chip>
-                <span className="text-xs text-gray-500">
-                  {userProfile?.interactionCount || 0} chats
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-sm text-gray-500">Credits</p>
-              <p className="text-lg font-bold">{credits?.credits || 0}</p>
-            </div>
-            <Button
-              color="danger"
-              variant="flat"
-              size="sm"
-              onClick={async () => {
-                if (sessionId) {
-                  await endSession.mutateAsync({ sessionId });
-                }
-                router.push("/");
-              }}
-            >
-              End Chat
-            </Button>
-          </div>
-        </CardHeader>
-
-        <Divider />
-
-        <CardBody className="flex-1 overflow-hidden p-0">
-          <div 
-            className="h-full overflow-y-auto p-6 scroll-smooth"
-            style={{ maxHeight: 'calc(100vh - 200px)' }}
-          >
-            <div className="space-y-4">
-              {messages.map((msg, index) => (
-                <div
-                  key={`${msg.timestamp || index}-${msg.role}`}
-                  className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[70%] ${
-                      msg.role === "user"
-                        ? "bg-primary text-primary-foreground"
-                        : msg.role === "system"
-                        ? "bg-warning/20 text-warning-600"
-                        : "bg-default-100"
-                    } rounded-2xl px-4 py-3 shadow-sm`}
-                  >
-                    <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                    {msg.timestamp && (
-                      <p className="text-xs opacity-60 mt-1">
-                        {new Date(msg.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit"
-                        })}
-                      </p>
-                    )}
+                  <ArrowLeft size={20} />
+                </Button>
+                
+                <div className="relative">
+                  <Avatar
+                    src="/avatar.webp"
+                    size="lg"
+                    className="ring-4 ring-pink-200"
+                  />
+                  <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-white animate-pulse" />
+                </div>
+                
+                <div>
+                  <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+                    Aria
+                    <Heart size={16} className="text-pink-500" />
+                  </h1>
+                  <div className="flex items-center gap-2">
+                    <Chip
+                      size="sm"
+                      color={getRelationshipColor(userProfile?.relationshipStage)}
+                      variant="flat"
+                      className="font-medium"
+                    >
+                      {getRelationshipEmoji(userProfile?.relationshipStage)} {userProfile?.relationshipStage || "new"}
+                    </Chip>
+                    <span className="text-xs text-gray-500">
+                      {userProfile?.interactionCount || 0} conversations
+                    </span>
                   </div>
                 </div>
-              ))}
+              </div>
 
-              {(isTyping || currentBurst) && (
-                <div className="flex justify-start">
-                  <div className="max-w-[70%] bg-default-100 rounded-2xl px-4 py-3 shadow-sm">
-                    {currentBurst ? (
-                      <div>
-                        <p className="text-sm opacity-60 italic mb-1">Aria is typing...</p>
-                        <p className="text-sm">{currentBurst}</p>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-default-500">Aria is typing</span>
-                        <div className="flex items-center gap-1">
-                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </div>
-                      </div>
-                    )}
+              {/* Right side - Stats and actions */}
+              <div className="flex items-center gap-3">
+                <div className="hidden sm:flex items-center gap-3">
+                  <div className="text-right">
+                    <div className="flex items-center gap-1">
+                      <Sparkles size={14} className="text-amber-500" />
+                      <span className="text-sm font-semibold text-gray-700">
+                        {credits?.credits || 0}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">Credits</p>
                   </div>
+                  
+                  <Button
+                    onClick={handleLoadHistory}
+                    disabled={isLoadingHistory || historyLoaded}
+                    isLoading={isLoadingHistory}
+                    size="sm"
+                    variant="flat"
+                    className="text-xs"
+                  >
+                    {historyLoaded ? "History Loaded" : "Load Previous"}
+                  </Button>
+                  
+                  <Button
+                    onClick={handleClearConversation}
+                    size="sm"
+                    variant="light"
+                    className="text-xs"
+                  >
+                    Clear
+                  </Button>
+                </div>
+                
+                <Button
+                  isIconOnly
+                  variant="light"
+                  size="sm"
+                >
+                  <MoreHorizontal size={18} />
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+        </Card>
+
+        {/* Main Chat Container */}
+        <Card className="border-0 bg-white/95 shadow-xl backdrop-blur-sm">
+          {/* Messages Area */}
+          <CardBody className="p-0">
+            <div className="flex h-[calc(100vh-300px)] min-h-[400px] max-h-[600px] flex-col">
+              <ScrollShadow 
+                hideScrollBar
+                className="flex-1 overflow-y-auto p-6"
+              >
+                <div className="space-y-4">
+                  {/* History Status Indicator */}
+                  {historyLoaded && (
+                    <div className="text-center mb-4">
+                      <Chip 
+                        size="sm" 
+                        variant="flat" 
+                        color="success"
+                        className="text-xs"
+                      >
+                        📜 Previous conversation loaded
+                      </Chip>
+                    </div>
+                  )}
+
+                  {messages.map((msg, index) => (
+                    <ChatMessage
+                      key={`${msg.timestamp || Date.now()}-${index}-${msg.role}`}
+                      role={msg.role as "user" | "assistant" | "system"}
+                      content={msg.content}
+                      timestamp={msg.timestamp}
+                      onCopy={() => navigator.clipboard.writeText(msg.content)}
+                    />
+                  ))}
+
+                  {/* Typing Indicator */}
+                  {(isTyping || currentBurst) && (
+                    <TypingIndicator />
+                  )}
+
+                  <div ref={messagesEndRef} className="h-1" />
+                </div>
+              </ScrollShadow>
+            </div>
+          </CardBody>
+
+          <Divider />
+
+          {/* Ice Breakers Section */}
+          {showIceBreakers && iceBreakers.length > 0 && (
+            <div className="px-6 py-4 bg-gradient-to-r from-pink-50/50 to-purple-50/50">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={16} className="text-purple-500" />
+                  <span className="text-sm font-semibold text-gray-700">Conversation Starters</span>
+                </div>
+                <Button 
+                  size="sm" 
+                  variant="light" 
+                  onClick={() => setShowIceBreakers(false)}
+                  className="text-xs"
+                >
+                  Hide
+                </Button>
+              </div>
+              <div className="grid gap-2">
+                {iceBreakers.map((iceBreaker) => (
+                  <IceBreakerCard
+                    key={iceBreaker.id}
+                    text={iceBreaker.text}
+                    type={iceBreaker.type}
+                    mood={iceBreaker.mood}
+                    onClick={() => handleIceBreakerClick(iceBreaker)}
+                    disabled={isTyping || credits?.credits === 0}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Input Area */}
+          <CardFooter className="p-6">
+            <div className="flex flex-col gap-3 w-full">
+              {/* Ice Breaker Button */}
+              {!showIceBreakers && messages.length > 0 && (
+                <div className="flex justify-center">
+                  <Button
+                    size="sm"
+                    variant="flat"
+                    onClick={handleGenerateIceBreakers}
+                    disabled={isGeneratingIceBreakers || (credits?.credits || 0) < 1}
+                    isLoading={isGeneratingIceBreakers}
+                    startContent={<Sparkles size={14} />}
+                    className="bg-gradient-to-r from-purple-100 to-pink-100 border border-purple-200 hover:from-purple-200 hover:to-pink-200"
+                  >
+                    Get conversation ideas {(credits?.credits || 0) < 1 ? "(1 credit needed)" : "(1 credit)"}
+                  </Button>
                 </div>
               )}
 
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-        </CardBody>
-
-        <Divider />
-
-        {/* Ice Breakers */}
-        {showIceBreakers && iceBreakers.length > 0 && (
-          <div className="px-6 py-3 bg-default-50/50">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-default-600">💡 Conversation Starters</p>
-              <Button 
-                size="sm" 
-                variant="light" 
-                onClick={() => setShowIceBreakers(false)}
-                className="text-xs"
-              >
-                Hide
-              </Button>
-            </div>
-            <div className="flex flex-col gap-2">
-              {iceBreakers.map((iceBreaker) => (
-                <Button
-                  key={iceBreaker.id}
-                  variant="flat"
-                  size="sm"
-                  className="justify-start text-left h-auto py-3 px-3"
-                  onClick={() => handleIceBreakerClick(iceBreaker)}
+              {/* Message Input */}
+              <div className="flex items-end gap-3 w-full">
+                <Textarea
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={handleKeyPress}
+                  placeholder="Type your message..."
                   disabled={isTyping || credits?.credits === 0}
-                >
-                  <div className="flex flex-col items-start w-full">
-                    <span className="text-sm">{iceBreaker.text}</span>
-                    <div className="flex items-center gap-2 mt-1">
-                      <Chip size="sm" variant="dot" color={
-                        iceBreaker.type === "flirty" ? "danger" :
-                        iceBreaker.type === "intimate" ? "secondary" :
-                        iceBreaker.type === "playful" ? "warning" :
-                        iceBreaker.type === "compliment" ? "success" :
-                        "primary"
-                      }>
-                        {iceBreaker.type}
-                      </Chip>
-                      <span className="text-xs text-default-400">{iceBreaker.mood}</span>
-                    </div>
-                  </div>
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <CardFooter className="px-6 py-4">
-          <div className="flex flex-col gap-3 w-full">
-            {/* Ice Breaker Toggle Button */}
-            {!showIceBreakers && messages.length > 0 && (
-              <div className="flex justify-center">
+                  minRows={1}
+                  maxRows={4}
+                  classNames={{
+                    base: "flex-1",
+                    input: "text-sm",
+                  }}
+                />
                 <Button
-                  size="sm"
-                  variant="flat"
-                  onClick={handleGenerateIceBreakers}
-                  disabled={isGeneratingIceBreakers || (credits?.credits || 0) < 1}
-                  isLoading={isGeneratingIceBreakers}
-                  className="text-xs"
+                  color="primary"
+                  onClick={handleSendMessage}
+                  disabled={!message.trim() || isTyping || credits?.credits === 0}
+                  isLoading={sendMessage.isPending}
+                  isIconOnly
+                  className="bg-gradient-to-r from-pink-500 to-purple-600 h-12 w-12"
                 >
-                  💡 Get conversation ideas {(credits?.credits || 0) < 1 ? "(1 credit needed)" : "(1 credit)"}
+                  <Send size={18} />
                 </Button>
               </div>
-            )}
 
-            {/* Message Input */}
-            <div className="flex items-center gap-2 w-full">
-            <Input
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Type your message..."
-              disabled={isTyping || credits?.credits === 0}
-              endContent={
-                <span className="text-xs text-default-400">
-                  {message.length}/1000
-                </span>
-              }
-              classNames={{
-                input: "text-sm",
-              }}
-            />
-            <Button
-              color="primary"
-              onClick={handleSendMessage}
-              disabled={!message.trim() || isTyping || credits?.credits === 0}
-              isLoading={sendMessage.isPending}
-            >
-              Send
-            </Button>
+              {/* Status Messages */}
+              {credits?.credits === 0 && (
+                <div className="text-center">
+                  <p className="text-sm text-danger">
+                    You're out of credits! Purchase more to continue chatting.
+                  </p>
+                </div>
+              )}
             </div>
+          </CardFooter>
+        </Card>
 
-            {credits?.credits === 0 && (
-              <p className="text-xs text-danger mt-2">
-                You're out of credits! Purchase more to continue chatting.
-              </p>
-            )}
-          </div>
-        </CardFooter>
-      </Card>
-
-      {/* Personality traits preview */}
-      {userProfile?.personalityTraits && (
-        <div className="mt-4 p-4 bg-default-50 rounded-lg">
-          <p className="text-xs font-semibold mb-2">Aria's Current Mood</p>
-          <div className="flex gap-2 flex-wrap">
-            {Object.entries(userProfile.personalityTraits)
-              .filter(([_, value]) => typeof value === 'number' && value > 0.7)
-              .slice(0, 5)
-              .map(([trait, value]) => (
-                <Chip key={trait} size="sm" variant="flat">
-                  {trait.replace(/_/g, " ")}
-                </Chip>
-              ))}
-          </div>
-        </div>
-      )}
+        {/* Personality Traits Preview */}
+        {userProfile?.personalityTraits && (
+          <Card className="mt-4 bg-gradient-to-r from-pink-50/80 to-purple-50/80 backdrop-blur-sm border-0">
+            <CardBody className="p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Heart size={16} className="text-pink-500" />
+                <span className="text-sm font-semibold text-gray-700">Aria's Current Mood</span>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {Object.entries(userProfile.personalityTraits)
+                  .filter(([_, value]) => typeof value === 'number' && value > 0.7)
+                  .slice(0, 5)
+                  .map(([trait, value]) => (
+                    <Chip 
+                      key={trait} 
+                      size="sm" 
+                      variant="flat"
+                      className="capitalize"
+                    >
+                      {trait.replace(/_/g, " ")}
+                    </Chip>
+                  ))}
+              </div>
+            </CardBody>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

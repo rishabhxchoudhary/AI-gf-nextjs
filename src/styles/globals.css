@@ -1,6 +1,190 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
-    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+:root {
+  --radius: 0.75rem;
+  /* Enhanced color scheme for AI Girlfriend theme */
+  --background: oklch(0.99 0.01 270);
+  --foreground: oklch(0.15 0.02 270);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0.02 270);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.02 270);
+  
+  /* Pink to Purple gradient primary colors */
+  --primary: oklch(0.65 0.15 330);
+  --primary-foreground: oklch(0.98 0.01 330);
+  
+  /* Softer secondary colors */
+  --secondary: oklch(0.96 0.02 270);
+  --secondary-foreground: oklch(0.25 0.02 270);
+  
+  --muted: oklch(0.94 0.02 270);
+  --muted-foreground: oklch(0.45 0.02 270);
+  
+  --accent: oklch(0.92 0.05 320);
+  --accent-foreground: oklch(0.25 0.02 320);
+  
+  --destructive: oklch(0.65 0.2 20);
+  --destructive-foreground: oklch(0.98 0.01 20);
+  
+  --border: oklch(0.88 0.02 270);
+  --input: oklch(0.92 0.02 270);
+  --ring: oklch(0.65 0.15 330);
+  
+  /* Chart colors with pink/purple theme */
+  --chart-1: oklch(0.65 0.15 330);
+  --chart-2: oklch(0.60 0.12 280);
+  --chart-3: oklch(0.55 0.15 320);
+  --chart-4: oklch(0.70 0.12 340);
+  --chart-5: oklch(0.60 0.18 310);
+}
+
+.dark {
+  --background: oklch(0.10 0.02 270);
+  --foreground: oklch(0.95 0.01 270);
+  --card: oklch(0.12 0.02 270);
+  --card-foreground: oklch(0.95 0.01 270);
+  --popover: oklch(0.12 0.02 270);
+  --popover-foreground: oklch(0.95 0.01 270);
+  --primary: oklch(0.75 0.15 330);
+  --primary-foreground: oklch(0.15 0.02 330);
+  --secondary: oklch(0.18 0.02 270);
+  --secondary-foreground: oklch(0.85 0.01 270);
+  --muted: oklch(0.16 0.02 270);
+  --muted-foreground: oklch(0.65 0.02 270);
+  --accent: oklch(0.20 0.05 320);
+  --accent-foreground: oklch(0.85 0.01 320);
+  --destructive: oklch(0.70 0.2 20);
+  --destructive-foreground: oklch(0.95 0.01 20);
+  --border: oklch(0.20 0.02 270);
+  --input: oklch(0.18 0.02 270);
+  --ring: oklch(0.75 0.15 330);
+  --chart-1: oklch(0.75 0.15 330);
+  --chart-2: oklch(0.70 0.12 280);
+  --chart-3: oklch(0.65 0.15 320);
+  --chart-4: oklch(0.80 0.12 340);
+  --chart-5: oklch(0.70 0.18 310);
+}
+
+/* Base styles */
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-feature-settings: "rlig" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Enhanced scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted) / 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.3);
+}
+
+/* Selection styling */
+::selection {
+  background: hsl(var(--primary) / 0.2);
+  color: hsl(var(--primary-foreground));
+}
+
+/* Focus styles */
+.focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Animation keyframes */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(-25%);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: translateY(0);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.animate-bounce {
+  animation: bounce 1s infinite;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Smooth transitions for interactive elements */
+button, .clickable {
+  transition: all 0.2s ease-in-out;
+}
+
+/* Glass morphism effect for cards */
+.glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.dark .glass-card {
+  background: rgba(17, 24, 39, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(55, 65, 81, 0.2);
+}
+
+/* Gradient text effect */
+.gradient-text {
+  background: linear-gradient(to right, rgb(236, 72, 153), rgb(168, 85, 247), rgb(99, 102, 241));
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+/* Custom shadow styles */
+.shadow-ai {
+  box-shadow: 
+    0 4px 6px -1px rgb(236 72 153 / 0.1),
+    0 2px 4px -2px rgb(236 72 153 / 0.1);
+}
+
+.shadow-ai-lg {
+  box-shadow: 
+    0 10px 15px -3px rgb(236 72 153 / 0.1),
+    0 4px 6px -4px rgb(236 72 153 / 0.1);
 }
