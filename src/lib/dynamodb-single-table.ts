@@ -81,6 +81,13 @@ export async function createUser(userId: string, email: string, name?: string) {
   const timestamp = new Date().toISOString();
   const { pk, sk } = keys.user(userId);
 
+  // Check if user already exists to prevent duplicates
+  const existingUser = await getUser(userId);
+  if (existingUser) {
+    console.log(`User ${userId} already exists, skipping creation`);
+    return existingUser;
+  }
+
   // Use transaction to create user with initial credits atomically
   const transactItems = [
     // User metadata
@@ -138,9 +145,18 @@ export async function createUser(userId: string, email: string, name?: string) {
     },
   ];
 
-  await dynamoDB.send(
-    new TransactWriteCommand({ TransactItems: transactItems }),
-  );
+  try {
+    await dynamoDB.send(
+      new TransactWriteCommand({ TransactItems: transactItems }),
+    );
+  } catch (error) {
+    // If user already exists, return existing user instead of failing
+    if (error instanceof Error && error.name === "ConditionalCheckFailedException") {
+      console.log(`User ${userId} already exists, returning existing user`);
+      return await getUser(userId);
+    }
+    throw error;
+  }
 }
 
 export async function getUser(userId: string) {

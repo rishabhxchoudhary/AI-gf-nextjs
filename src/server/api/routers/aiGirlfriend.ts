@@ -41,7 +41,7 @@ const DEFAULT_TEMPERATURE = 0.9;
 export const aiGirlfriendRouter = createTRPCRouter({
   // Initialize user if they don't exist
   initializeUser: protectedProcedure.mutation(async ({ ctx }) => {
-    const userId = ctx.session.user.id;
+    const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
     const email = ctx.session.user.email || "";
     const name = ctx.session.user.name || "User";
 
@@ -69,7 +69,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
   // Start a new chat session
   startSession: protectedProcedure.mutation(async ({ ctx }) => {
-    const userId = ctx.session.user.id;
+    const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
     const sessionId = nanoid();
 
     // Create conversation record
@@ -96,7 +96,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const { message, sessionId } = input;
 
       // Check credits first and ensure user has credits initialized
@@ -240,7 +240,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const messages = await getMessages(userId, input.sessionId, input.limit);
 
       return {
@@ -257,7 +257,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .query(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const sessions = await getUserSessions(userId, input.limit);
 
       return {
@@ -272,7 +272,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
   // Get user profile and credits
   getUserProfile: protectedProcedure.query(async ({ ctx }) => {
-    const userId = ctx.session.user.id;
+    const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
     let user = await getUserWithCredits(userId);
 
     // If user doesn't exist, create them first
@@ -295,7 +295,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
     return {
       user: {
-        id: userId,
+        id: userId, // This is now the email
         email: user.email,
         name: user.name,
         credits: user.credits || 0,
@@ -320,7 +320,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const { message, sessionId } = input;
 
       // Check credits first
@@ -433,7 +433,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
 
   // Get current credits
   getCredits: protectedProcedure.query(async ({ ctx }) => {
-    const userId = ctx.session.user.id;
+    const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
     const credits = await getUserCredits(userId);
     const user = await getUser(userId);
 
@@ -466,7 +466,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
 
       // Track analytics
       await trackAnalytics(userId, "session_end", {
@@ -488,7 +488,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
 
       // This is a simplified version - in production, this would be tied to payment processing
       const user = await getUserWithCredits(userId);
@@ -523,7 +523,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const { sessionId, count, includeTypes, excludeTypes } = input;
 
       // Check credits first
@@ -639,7 +639,7 @@ export const aiGirlfriendRouter = createTRPCRouter({
       }),
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.session.user.id;
+      const userId = ctx.session.user.email || ctx.session.user.id; // Use email as primary identifier
       const { sessionId, iceBreakerId, message } = input;
 
       // Check credits first
